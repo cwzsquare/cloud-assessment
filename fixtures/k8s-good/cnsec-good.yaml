@@ -1,0 +1,270 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnsec-good
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.metrics.k8s.io
+spec:
+  group: metrics.k8s.io
+  service:
+    name: metrics-server
+    namespace: kube-system
+    port: 443
+  version: v1beta1
+status:
+  conditions:
+  - type: Available
+    status: "True"
+    reason: Passed
+    message: all checks passed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-server
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: metrics-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: metrics-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: metrics-server
+    spec:
+      containers:
+      - name: metrics-server
+        image: registry.k8s.io/metrics-server/metrics-server:v0.8.1
+status:
+  replicas: 1
+  readyReplicas: 1
+  availableReplicas: 1
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rq
+  namespace: cnsec-good
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: cnsec-good
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-good-pull
+  namespace: cnsec-good
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: redacted
+---
+apiVersion: fixtures.cnsec/v1
+kind: RegistryEndpoint
+metadata:
+  name: registry-good
+url: https://registry.good.example
+tls_enabled: true
+anonymous_pull: false
+robot_account: robot$pull
+robot_account_scope: project:cnsec-good:pull
+audit_enabled: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-good
+  namespace: cnsec-good
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-good
+  template:
+    metadata:
+      labels:
+        app: web-good
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+      - name: registry-good-pull
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      containers:
+      - name: web
+        image: nginxinc/nginx-unprivileged:1.27-alpine@sha256:example
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-good-pdb
+  namespace: cnsec-good
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: web-good
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-good-hpa
+  namespace: cnsec-good
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-good
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+status:
+  conditions:
+  - type: AbleToScale
+    status: "True"
+    reason: ReadyForNewScale
+    message: recommended size matches current size
+  - type: ScalingActive
+    status: "True"
+    reason: ValidMetricFound
+    message: the HPA was able to successfully calculate a replica count from cpu resource utilization
+  - type: ScalingLimited
+    status: "True"
+    reason: TooFewReplicas
+    message: the desired replica count is less than the minimum replica count
+  currentMetrics:
+  - type: Resource
+    resource:
+      name: cpu
+      current:
+        averageUtilization: 0
+        averageValue: "0"
+  currentReplicas: 2
+  desiredReplicas: 2
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: cnsec-good
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-csi
+provisioner: csi.example.test
+parameters:
+  encrypted: "true"
+  kmsKeyId: cnsec-demo-key
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: encrypted-csi-snapshots
+driver: csi.example.test
+deletionPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cnsec-good-csi-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: encrypted-csi
+  csi:
+    driver: csi.example.test
+    volumeHandle: cnsec-good-csi-pv
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: good-data
+  namespace: cnsec-good
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: encrypted-csi
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: good-data-snapshot
+  namespace: cnsec-good
+spec:
+  source:
+    persistentVolumeClaimName: good-data

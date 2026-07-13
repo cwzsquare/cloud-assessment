@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+
+JSON_SCHEMAS = {
+    "AssetRef": {
+        "type": "object",
+        "required": ["kind", "name"],
+        "properties": {
+            "kind": {"type": "string"},
+            "name": {"type": "string"},
+            "namespace": {"type": ["string", "null"]},
+            "api_version": {"type": ["string", "null"]},
+            "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+    },
+    "Evidence": {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {
+            "summary": {"type": "string"},
+            "object_ref": {"anyOf": [{"$ref": "#/$defs/AssetRef"}, {"type": "null"}]},
+            "json_path": {"type": ["string", "null"]},
+            "observed": {},
+            "expected": {},
+            "raw_snippet": {},
+        },
+    },
+    "Finding": {
+        "type": "object",
+        "required": [
+            "id",
+            "task_id",
+            "tool_id",
+            "checkpoint_id",
+            "rule_id",
+            "title",
+            "status",
+            "severity",
+            "score",
+            "evidence",
+            "remediation",
+            "fingerprint",
+        ],
+        "properties": {
+            "id": {"type": "string"},
+            "task_id": {"type": "string"},
+            "tool_id": {"type": "string"},
+            "checkpoint_id": {"type": "string"},
+            "rule_id": {"type": "string"},
+            "title": {"type": "string"},
+            "status": {"enum": ["PASS", "FAIL", "WARN", "UNKNOWN", "NOT_APPLICABLE"]},
+            "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+            "score": {"type": "number"},
+            "asset": {"anyOf": [{"$ref": "#/$defs/AssetRef"}, {"type": "null"}]},
+            "evidence": {"type": "array", "items": {"$ref": "#/$defs/Evidence"}},
+            "remediation": {"type": "string"},
+            "references": {"type": "array", "items": {"type": "string"}},
+            "fingerprint": {"type": "string"},
+        },
+    },
+    "AssessmentReport": {
+        "type": "object",
+        "required": ["schema_version", "task_id", "generated_at", "summary", "checkpoint_scores", "findings"],
+        "properties": {
+            "schema_version": {"type": "string"},
+            "task_id": {"type": "string"},
+            "generated_at": {"type": "string"},
+            "summary": {"type": "object"},
+            "checkpoint_scores": {"type": "array"},
+            "findings": {"type": "array", "items": {"$ref": "#/$defs/Finding"}},
+        },
+    },
+    "RawSnapshot": {
+        "type": "object",
+        "required": ["id", "task_id", "source", "kind", "schema_version", "content_hash", "summary", "warning_count"],
+        "properties": {
+            "id": {"type": "integer"},
+            "task_id": {"type": "string"},
+            "source": {"type": "string"},
+            "kind": {"type": "string"},
+            "schema_version": {"type": "string"},
+            "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "summary": {"type": "object"},
+            "warning_count": {"type": "integer"},
+        },
+    },
+    "Checkpoint": {
+        "type": "object",
+        "required": ["id", "tender_no", "name", "rule_group", "domain", "weight"],
+        "properties": {
+            "id": {"type": "string"},
+            "tender_no": {"type": "integer"},
+            "name": {"type": "string"},
+            "rule_group": {"type": "string"},
+            "domain": {"type": "string"},
+            "weight": {"type": "number"},
+            "base_weight": {"type": "number"},
+            "dimensions": {"type": "array", "items": {"type": "string"}},
+            "data_sources": {"type": "array", "items": {"type": "string"}},
+            "enabled": {"type": "boolean"},
+            "applicability": {"type": "object"},
+            "rule_enabled": {"type": "object", "additionalProperties": {"type": "boolean"}},
+        },
+    },
+    "Target": {
+        "type": "object",
+        "required": ["id", "name", "type", "connection_mode"],
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+            "connection_mode": {"enum": ["manifest", "kubeconfig", "pve_ssh"]},
+            "manifest": {"type": ["string", "null"]},
+            "kubeconfig": {"type": ["string", "null"]},
+            "pve_ssh": {"type": ["string", "null"]},
+            "control_plane_ip": {"type": ["string", "null"]},
+            "ssh_key": {"type": ["string", "null"]},
+            "ssh_user": {"type": ["string", "null"]},
+            "labels": {"type": "object"},
+        },
+    },
+}
+
+
+def schema_bundle() -> dict[str, object]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://cloudnative-security.local/schema/v1",
+        "title": "Cloud Native Security Assessment Schema",
+        "$defs": JSON_SCHEMAS,
+    }

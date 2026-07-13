@@ -1,0 +1,372 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: business-critical
+value: 100000
+globalDefault: false
+description: Critical business workloads for cnsec-good demos.
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-run-as-non-root
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: require-run-as-non-root
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - kyverno
+          - trivy-system
+          - falco
+          - default
+    validate:
+      message: Pods must set spec.securityContext.runAsNonRoot=true.
+      pattern:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privilege-escalation
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: disallow-privilege-escalation
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - kyverno
+          - trivy-system
+          - falco
+          - default
+    validate:
+      message: Containers must set allowPrivilegeEscalation=false.
+      pattern:
+        spec:
+          containers:
+          - securityContext:
+              allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnsec-good
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rq
+  namespace: cnsec-good
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: cnsec-good
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-good
+  namespace: cnsec-good
+  annotations:
+    cnsec.io/spec-hash: "624944114804e2e23ccd0c3c437723c70be8a7734c5ec3f3ccce70f39fe80c2e"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: web-good
+  template:
+    metadata:
+      labels:
+        app: web-good
+    spec:
+      priorityClassName: business-critical
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      containers:
+      - name: web
+        image: busybox:1.36.1
+        command:
+        - sh
+        - -c
+        - sleep 36000
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-good-pdb
+  namespace: cnsec-good
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: web-good
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-good-hpa
+  namespace: cnsec-good
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-good
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: cnsec-good
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-local
+provisioner: kubernetes.io/no-provisioner
+parameters:
+  encrypted: "true"
+  kmsKeyId: cnsec-demo-key
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cnsec-good-local-pv
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: encrypted-local
+  hostPath:
+    path: /tmp/cnsec-good-pv
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orders-db-credentials
+  namespace: cnsec-good
+type: Opaque
+stringData:
+  password: redacted-demo-password
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orders-db-tls
+  namespace: cnsec-good
+type: kubernetes.io/tls
+stringData:
+  tls.crt: demo-cert
+  tls.key: demo-key
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orders-db-data
+  namespace: cnsec-good
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: encrypted-local
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: orders-db
+  namespace: cnsec-good
+  annotations:
+    cnsec.io/data-role: database
+    cnsec.io/spec-hash: "fa683ef68b87426a9a253fc879acb5a103df54b13f236e709dc8b7f106bb2264"
+spec:
+  serviceName: orders-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orders-db
+  template:
+    metadata:
+      annotations:
+        cnsec.io/data-role: database
+      labels:
+        app: orders-db
+    spec:
+      priorityClassName: business-critical
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: orders-db-data
+      - name: tls
+        secret:
+          secretName: orders-db-tls
+      - name: tmp
+        emptyDir: {}
+      containers:
+      - name: db
+        image: busybox:1.36.1
+        command:
+        - sh
+        - -c
+        - sleep 36000
+        ports:
+        - name: postgres
+          containerPort: 5432
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: orders-db-credentials
+              key: password
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "300m"
+            memory: "256Mi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        - name: tls
+          mountPath: /var/run/tls
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-db
+  namespace: cnsec-good
+spec:
+  selector:
+    app: orders-db
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders-db-ingress
+  namespace: cnsec-good
+spec:
+  podSelector:
+    matchLabels:
+      app: orders-db
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5432

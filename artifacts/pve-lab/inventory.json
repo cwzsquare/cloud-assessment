@@ -1,0 +1,9 @@
+{
+  "pve_node": "pve-nested-01",
+  "network": {"bridge": "vmbr1", "cidr": "10.20.0.0/24", "gateway": "10.20.0.1"},
+  "vms": [
+    {"id": 111, "name": "k8s-cp-1", "ip": "10.20.0.11", "role": "control-plane"},
+    {"id": 102, "name": "k8s-worker-1", "ip": "10.20.0.21", "role": "worker"},
+    {"id": 103, "name": "k8s-worker-2", "ip": "10.20.0.22", "role": "worker"}
+  ]
+}

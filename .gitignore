@@ -1,0 +1,29 @@
+# Local Python/runtime state
+.venv/
+.cache/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+artifacts/pve-lab/kubeconfig
+artifacts/pve-lab/**/kubeconfig
+artifacts/pve-lab/lab.env
+*.pem
+*.key
+
+# Generated databases and raw runtime logs
+*.sqlite3
+*.db
+*.log
+artifacts/pve-lab/logs/
+artifacts/pve-lab/artifacts/
+
+# Generic local/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp

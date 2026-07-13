@@ -1,0 +1,135 @@
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION              CONTAINER-RUNTIME
+k8s-cp-1       Ready    control-plane   10h   v1.36.2   10.20.0.11    <none>        Ubuntu 24.04.4 LTS   6.8.0-117-generic (amd64)   containerd://2.2.1
+k8s-worker-1   Ready    <none>          10h   v1.36.2   10.20.0.21    <none>        Ubuntu 24.04.4 LTS   6.8.0-117-generic (amd64)   containerd://2.2.1
+k8s-worker-2   Ready    <none>          10h   v1.36.2   10.20.0.22    <none>        Ubuntu 24.04.4 LTS   6.8.0-117-generic (amd64)   containerd://2.2.1
+--- pods
+NAMESPACE      NAME                                             READY   STATUS             RESTARTS        AGE     IP               NODE           NOMINATED NODE   READINESS GATES
+cnsec-bad      no-ttl-job-6747z                                 0/1     Completed          0               29m     10.244.140.9     k8s-worker-2   <none>           <none>
+cnsec-bad      postgres-bad-0                                   0/1     CrashLoopBackOff   8 (3m56s ago)   10h     10.244.230.7     k8s-worker-1   <none>           <none>
+cnsec-bad      web-bad-7f58879b65-zb6th                         1/1     Running            0               29m     10.244.230.8     k8s-worker-1   <none>           <none>
+cnsec-good     web-good-7b55cbfb8-26jdp                         1/1     Running            0               5m30s   10.244.230.22    k8s-worker-1   <none>           <none>
+cnsec-good     web-good-7b55cbfb8-8njmn                         1/1     Running            0               5m36s   10.244.140.25    k8s-worker-2   <none>           <none>
+falco          falco-d96lc                                      2/2     Running            0               10m     10.244.111.193   k8s-cp-1       <none>           <none>
+falco          falco-nt7w4                                      2/2     Running            0               10m     10.244.230.21    k8s-worker-1   <none>           <none>
+falco          falco-vtnbw                                      2/2     Running            0               10m     10.244.140.20    k8s-worker-2   <none>           <none>
+kube-system    calico-kube-controllers-6b9b5f7c4-wcqcf          1/1     Running            0               10h     10.244.140.3     k8s-worker-2   <none>           <none>
+kube-system    calico-node-2wtmn                                1/1     Running            0               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    calico-node-gd2vk                                1/1     Running            0               10h     10.20.0.22       k8s-worker-2   <none>           <none>
+kube-system    calico-node-zbxp2                                1/1     Running            0               10h     10.20.0.21       k8s-worker-1   <none>           <none>
+kube-system    coredns-6b5f954497-7qqhp                         1/1     Running            0               10h     10.244.140.1     k8s-worker-2   <none>           <none>
+kube-system    coredns-6b5f954497-9kn6f                         1/1     Running            0               10h     10.244.140.2     k8s-worker-2   <none>           <none>
+kube-system    etcd-k8s-cp-1                                    1/1     Running            1               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    kube-apiserver-k8s-cp-1                          1/1     Running            1               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    kube-controller-manager-k8s-cp-1                 1/1     Running            1               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    kube-proxy-5rxn5                                 1/1     Running            0               10h     10.20.0.21       k8s-worker-1   <none>           <none>
+kube-system    kube-proxy-vckdc                                 1/1     Running            0               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    kube-proxy-zfhxf                                 1/1     Running            0               10h     10.20.0.22       k8s-worker-2   <none>           <none>
+kube-system    kube-scheduler-k8s-cp-1                          1/1     Running            1               10h     10.20.0.11       k8s-cp-1       <none>           <none>
+kube-system    metrics-server-6b58d6dfb5-ntfrc                  1/1     Running            0               10h     10.244.230.1     k8s-worker-1   <none>           <none>
+kyverno        kyverno-admission-controller-5fcdd7885d-2p7vk    1/1     Running            0               10h     10.244.230.4     k8s-worker-1   <none>           <none>
+kyverno        kyverno-background-controller-7fb75db669-8x5cg   1/1     Running            0               10h     10.244.140.4     k8s-worker-2   <none>           <none>
+kyverno        kyverno-cleanup-controller-75ff4cdf6b-t2m5v      1/1     Running            0               10h     10.244.230.3     k8s-worker-1   <none>           <none>
+kyverno        kyverno-reports-controller-86b7c49987-2db4d      1/1     Running            0               10h     10.244.230.2     k8s-worker-1   <none>           <none>
+trivy-system   trivy-operator-58d5c7569f-rqvmh                  1/1     Running            0               20m     10.244.230.16    k8s-worker-1   <none>           <none>
+--- helm
+NAME            	NAMESPACE   	REVISION	UPDATED                                	STATUS  	CHART                 	APP VERSION
+falco           	falco       	1       	2026-06-22 02:50:55.090723434 +0000 UTC	deployed	falco-9.1.0           	0.44.1     
+kyverno         	kyverno     	1       	2026-06-21 16:36:55.552578653 +0000 UTC	deployed	kyverno-3.8.1         	v1.18.1    
+kyverno-policies	kyverno     	1       	2026-06-21 16:38:14.696320337 +0000 UTC	deployed	kyverno-policies-3.8.0	v1.18.0    
+trivy-operator  	trivy-system	3       	2026-06-22 02:57:12.601420176 +0000 UTC	deployed	trivy-operator-0.33.2 	0.31.2     
+--- hpa-pdb
+NAMESPACE    NAME                                               REFERENCE             TARGETS              MINPODS   MAXPODS   REPLICAS   AGE
+cnsec-bad    horizontalpodautoscaler.autoscaling/web-bad-hpa    Deployment/web-bad    cpu: <unknown>/60%   1         1000      1          10h
+cnsec-good   horizontalpodautoscaler.autoscaling/web-good-hpa   Deployment/web-good   cpu: 0%/70%          2         5         2          10h
+
+NAMESPACE     NAME                                                 MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+cnsec-good    poddisruptionbudget.policy/web-good-pdb              1               N/A               1                     10h
+kube-system   poddisruptionbudget.policy/calico-kube-controllers   N/A             1                 1                     10h
+--- trivy
+NAMESPACE      NAME                                                                                                        REPOSITORY                      TAG           SCANNER   AGE
+cnsec-bad      vulnerabilityreport.aquasecurity.github.io/job-no-ttl-job-hello                                             library/busybox                 latest        Trivy     16m
+cnsec-bad      vulnerabilityreport.aquasecurity.github.io/statefulset-postgres-bad-postgres                                library/postgres                latest        Trivy     16m
+cnsec-good     vulnerabilityreport.aquasecurity.github.io/replicaset-web-good-7b55cbfb8-web                                nginxinc/nginx-unprivileged     1.27-alpine   Trivy     4m29s
+cnsec-good     vulnerabilityreport.aquasecurity.github.io/replicaset-web-good-84c4bffbf6-web                               nginxinc/nginx-unprivileged     1.27-alpine   Trivy     4m27s
+falco          vulnerabilityreport.aquasecurity.github.io/daemonset-falco-falcoctl-artifact-follow                         falcosecurity/falcoctl          0.13.0        Trivy     9m18s
+kube-system    vulnerabilityreport.aquasecurity.github.io/daemonset-calico-node-calico-node                                calico/node                     v3.32.0       Trivy     16m
+kube-system    vulnerabilityreport.aquasecurity.github.io/replicaset-7556bb4bd9                                            calico/kube-controllers         v3.32.0       Trivy     13m
+kube-system    vulnerabilityreport.aquasecurity.github.io/replicaset-coredns-6b5f954497-coredns                            google_containers/coredns       v1.14.2       Trivy     12m
+kyverno        vulnerabilityreport.aquasecurity.github.io/replicaset-kyverno-admission-controller-5fcdd7885d-kyverno       kyverno/kyverno                 v1.18.1       Trivy     12m
+kyverno        vulnerabilityreport.aquasecurity.github.io/replicaset-kyverno-background-controller-7fb75db669-controller   kyverno/background-controller   v1.18.1       Trivy     12m
+kyverno        vulnerabilityreport.aquasecurity.github.io/replicaset-kyverno-cleanup-controller-75ff4cdf6b-controller      kyverno/cleanup-controller      v1.18.1       Trivy     12m
+kyverno        vulnerabilityreport.aquasecurity.github.io/replicaset-kyverno-reports-controller-86b7c49987-controller      kyverno/reports-controller      v1.18.1       Trivy     12m
+trivy-system   vulnerabilityreport.aquasecurity.github.io/replicaset-trivy-operator-58d5c7569f-trivy-operator              aquasec/trivy-operator          0.31.2        Trivy     16m
+
+NAMESPACE      NAME                                                                                           SCANNER   AGE
+cnsec-bad      configauditreport.aquasecurity.github.io/job-no-ttl-job                                        Trivy     20m
+cnsec-bad      configauditreport.aquasecurity.github.io/persistentvolumeclaim-db-data                         Trivy     20m
+cnsec-bad      configauditreport.aquasecurity.github.io/replicaset-web-bad-7f58879b65                         Trivy     20m
+cnsec-bad      configauditreport.aquasecurity.github.io/service-web-bad-ssh                                   Trivy     20m
+cnsec-bad      configauditreport.aquasecurity.github.io/statefulset-postgres-bad                              Trivy     20m
+cnsec-good     configauditreport.aquasecurity.github.io/limitrange-defaults                                   Trivy     20m
+cnsec-good     configauditreport.aquasecurity.github.io/networkpolicy-default-deny                            Trivy     20m
+cnsec-good     configauditreport.aquasecurity.github.io/replicaset-web-good-7b55cbfb8                         Trivy     5m37s
+cnsec-good     configauditreport.aquasecurity.github.io/resourcequota-rq                                      Trivy     20m
+default        configauditreport.aquasecurity.github.io/service-kubernetes                                    Trivy     20m
+falco          configauditreport.aquasecurity.github.io/daemonset-falco                                       Trivy     10m
+kube-system    configauditreport.aquasecurity.github.io/daemonset-calico-node                                 Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/daemonset-kube-proxy                                  Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/pod-etcd-k8s-cp-1                                     Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/pod-kube-apiserver-k8s-cp-1                           Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/pod-kube-controller-manager-k8s-cp-1                  Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/pod-kube-scheduler-k8s-cp-1                           Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/replicaset-calico-kube-controllers-6b9b5f7c4          Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/replicaset-coredns-6b5f954497                         Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/replicaset-metrics-server-6b58d6dfb5                  Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/service-kube-dns                                      Trivy     20m
+kube-system    configauditreport.aquasecurity.github.io/service-metrics-server                                Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/replicaset-kyverno-admission-controller-5fcdd7885d    Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/replicaset-kyverno-background-controller-7fb75db669   Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/replicaset-kyverno-cleanup-controller-75ff4cdf6b      Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/replicaset-kyverno-reports-controller-86b7c49987      Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-background-controller-metrics         Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-cleanup-controller                    Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-cleanup-controller-metrics            Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-reports-controller-metrics            Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-svc                                   Trivy     20m
+kyverno        configauditreport.aquasecurity.github.io/service-kyverno-svc-metrics                           Trivy     20m
+trivy-system   configauditreport.aquasecurity.github.io/replicaset-trivy-operator-58d5c7569f                  Trivy     20m
+trivy-system   configauditreport.aquasecurity.github.io/service-trivy-operator                                Trivy     20m
+
+NAMESPACE      NAME                                                                                         SCANNER   AGE
+cnsec-bad      rbacassessmentreport.aquasecurity.github.io/role-dangerous-app-role                          Trivy     20m
+kube-public    rbacassessmentreport.aquasecurity.github.io/role-554cf6fccd                                  Trivy     20m
+kube-public    rbacassessmentreport.aquasecurity.github.io/role-b99d4b8d7                                   Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-5b449d74ff                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-5ddf59494b                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-6fbccbcb9d                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-77cd64c645                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-79f88497                                    Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-868458b9d6                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-86cd8b4dd9                                  Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-b99d4b8d7                                   Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-extension-apiserver-authentication-reader   Trivy     20m
+kube-system    rbacassessmentreport.aquasecurity.github.io/role-kube-proxy                                  Trivy     20m
+kyverno        rbacassessmentreport.aquasecurity.github.io/role-586b8c778d                                  Trivy     20m
+kyverno        rbacassessmentreport.aquasecurity.github.io/role-5fc98dd666                                  Trivy     20m
+kyverno        rbacassessmentreport.aquasecurity.github.io/role-78fb9f7b45                                  Trivy     20m
+kyverno        rbacassessmentreport.aquasecurity.github.io/role-899885f55                                   Trivy     20m
+trivy-system   rbacassessmentreport.aquasecurity.github.io/role-trivy-operator                              Trivy     20m
+trivy-system   rbacassessmentreport.aquasecurity.github.io/role-trivy-operator-leader-election              Trivy     20m
+
+NAMESPACE     NAME                                                                                SCANNER   AGE
+kube-system   infraassessmentreport.aquasecurity.github.io/pod-etcd-k8s-cp-1                      Trivy     20m
+kube-system   infraassessmentreport.aquasecurity.github.io/pod-kube-apiserver-k8s-cp-1            Trivy     20m
+kube-system   infraassessmentreport.aquasecurity.github.io/pod-kube-controller-manager-k8s-cp-1   Trivy     20m
+kube-system   infraassessmentreport.aquasecurity.github.io/pod-kube-scheduler-k8s-cp-1            Trivy     20m
+
+NAMESPACE   NAME                                                                    SCANNER   AGE
+            clusterinfraassessmentreport.aquasecurity.github.io/node-k8s-cp-1       Trivy     2m23s
+            clusterinfraassessmentreport.aquasecurity.github.io/node-k8s-worker-1   Trivy     13m
+            clusterinfraassessmentreport.aquasecurity.github.io/node-k8s-worker-2   Trivy     15m
+
+NAMESPACE   NAME                                                  REPOSITORY   TAG      SCANNER   AGE
+            clustersbomreport.aquasecurity.github.io/64b47668d8   kubernetes   1.36.2   Trivy     20m
+--- falco-cnsec-event
+02:55:58.309877102: Warning Sensitive file opened for reading by non-trusted program | file=/etc/shadow gparent=containerd-shim ggparent=systemd gggparent=<NA> evt_type=openat user=root user_uid=0 user_loginuid=-1 process=cat proc_exepath=/usr/bin/cat parent=sh command=cat /etc/shadow terminal=0 container_id=a7dca3ba7b2c container_name=web container_image_repository=docker.io/library/nginx container_image_tag=latest k8s_pod_name=web-bad-7f58879b65-zb6th k8s_ns_name=cnsec-bad
