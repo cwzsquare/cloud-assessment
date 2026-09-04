@@ -24,12 +24,10 @@
         <button class="tab active" data-route="overview" type="button">安全总览</button>
         <button class="tab tab-outcome" data-route="findings" type="button">风险问题</button>
         <button class="tab tab-outcome" data-route="observability" type="button">服务与资源</button>
-        <button class="tab tab-outcome" data-route="visualization" type="button">态势工作台</button>
         <button class="tab tab-outcome" data-route="report" type="button">报告下载</button>
         <details class="nav-secondary">
           <summary>配置与管理</summary>
           <div class="nav-secondary-list">
-            <button class="tab tab-secondary" data-route="integration" type="button">数据接口</button>
             <button class="tab tab-secondary" data-route="targets" type="button">目标设置</button>
             <button class="tab tab-secondary" data-route="cloudnative" type="button">云原生检查</button>
             <button class="tab tab-secondary" data-route="api" type="button">API 工具</button>
@@ -74,36 +72,6 @@
             <div id="progressTimeline" class="timeline"></div>
           </section>
         </section>
-        <section id="integration" class="view">
-          <div class="feature-hero">
-            <div>
-              <span class="eyebrow">数据接口状态</span>
-              <h2>评估数据流</h2>
-              <p>评估工具的结果先经过统一整理，再由前端以 JSON 方式加载并展示。打开浏览器 F12 的 Network，可以查看本页使用的 dashboard-data 中间数据。</p>
-            </div>
-            <div class="hero-badge"><strong id="integrationAdapterCount">--</strong><span>工具接入数</span></div>
-          </div>
-          <div id="integrationStats" class="summary-grid compact-grid"></div>
-          <section class="panel pipeline-panel">
-            <div class="section-head"><div><span class="eyebrow">数据处理过程</span><h2>统一数据流</h2></div><span id="integrationSchema" class="muted">统一结果格式</span></div>
-            <div id="integrationFlow" class="pipeline-flow"></div>
-          </section>
-          <div class="integration-toolbar">
-            <div class="segmented" role="tablist" aria-label="数据处理验收分组">
-              <button class="integration-group active" data-integration-group="data_processing" type="button">数据加工 <span id="dataPointCount">14</span></button>
-              <button class="integration-group" data-integration-group="visualization" type="button">页面展示能力 <span id="vizPointCount">9</span></button>
-            </div>
-            <span id="integrationGroupHint" class="muted">数据加工 · 14 个验收小点</span>
-          </div>
-          <div class="integration-layout">
-            <div id="integrationCatalog" class="integration-catalog"></div>
-            <aside id="integrationDetail" class="integration-detail panel"></aside>
-          </div>
-          <section class="panel adapter-strip">
-            <div class="section-head"><div><span class="eyebrow">工具接入</span><h2>工具适配器状态</h2></div><span class="muted">区分已接入与待接入工具</span></div>
-            <div id="integrationAdapters" class="adapter-grid"></div>
-          </section>
-        </section>
 
         <section id="observability" class="view">
           <div class="feature-hero observability-hero">
@@ -138,28 +106,6 @@
           </div>
         </section>
 
-        <section id="visualization" class="view">
-          <div class="feature-hero visualization-hero">
-            <div>
-              <span class="eyebrow">前端态势展示</span>
-              <h2>评估态势工作台</h2>
-              <p>把总分、风险问题、工具结果和整改依据放在一个可点击的工作台中，方便快速了解当前安全情况。</p>
-            </div>
-            <div class="hero-badge"><strong id="visualizationScore">--</strong><span>证据覆盖率</span></div>
-          </div>
-          <div id="visualizationStats" class="summary-grid compact-grid"></div>
-          <div class="visualization-grid">
-            <section class="panel viz-preview-panel">
-              <div class="section-head"><div><span class="eyebrow">态势预览</span><h2>综合态势快照</h2></div><button class="ghost-button" data-route-jump="overview" type="button">打开总览</button></div>
-              <div id="vizPreview" class="viz-preview"></div>
-            </section>
-            <section class="panel viz-capability-panel">
-              <div class="section-head"><div><span class="eyebrow">页面展示能力</span><h2>展示能力清单</h2></div><span class="muted">点击能力进入证据详情</span></div>
-              <div id="visualizationCatalog" class="visualization-catalog"></div>
-            </section>
-          </div>
-          <section id="visualizationDetail" class="panel visualization-detail"></section>
-        </section>
 
         <section id="targets" class="view">
           <div class="dashboard-grid two">
