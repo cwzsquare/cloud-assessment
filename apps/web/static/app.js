@@ -10,7 +10,7 @@
     rbacMatrix: null,
     taskEvents: [],
     selectedFinding: null,
-    filters: { tool_id: "", checkpoint_id: "", domain: "", severity: "", status: "", namespace: "", kind: "", name: "", keyword: "" },
+    filters: { tool_id: "", domain: "", severity: "", status: "", namespace: "", kind: "", name: "", keyword: "" },
     rbacFilters: { subject: "", resource: "", verb: "", scope: "", dangerous_only: true },
   };
 
@@ -563,10 +563,9 @@
 
   function renderFilters() {
     fillSelect("toolFilter", state.findings.filter(function (f) { return f.tool_id !== "platform"; }).map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
-    fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项", checkpointLabel);
     fillSelect("domainFilter", checkpointScores().filter(function (s) { return isCloudNativeModule(s.domain); }).map(function (s) { return s.domain; }), "全部安全模块");
-    fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
-    fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态");
+    fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级", severityLabel);
+    fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态", statusLabel);
   }
 
   function fillSelect(id, values, label, formatter) {
@@ -584,7 +583,6 @@
       var asset = assetOf(f);
       var haystack = [f.title, f.rule_id, f.checkpoint_id, f.remediation, asset.label, JSON.stringify(safeJson(f.evidence_json, f.evidence || []))].join(" ").toLowerCase();
       return (!state.filters.tool_id || f.tool_id === state.filters.tool_id) &&
-        (!state.filters.checkpoint_id || f.checkpoint_id === state.filters.checkpoint_id) &&
         (!state.filters.domain || domains[f.checkpoint_id] === state.filters.domain) &&
         (!state.filters.severity || f.severity === state.filters.severity) &&
         (!state.filters.status || f.status === state.filters.status) &&
@@ -827,7 +825,7 @@
       if (target && target.classList && target.classList.contains("save-weight")) saveWeight(target.dataset.checkpoint);
       if (target && target.classList && target.classList.contains("save-checkpoint-meta")) saveCheckpointMeta(target.dataset.checkpoint);
     });
-    [["toolFilter", "tool_id"], ["checkpointFilter", "checkpoint_id"], ["domainFilter", "domain"], ["severityFilter", "severity"], ["statusFilter", "status"], ["namespaceFilter", "namespace"], ["kindFilter", "kind"], ["nameFilter", "name"], ["keywordFilter", "keyword"]].forEach(function (pair) {
+    [["toolFilter", "tool_id"], ["domainFilter", "domain"], ["severityFilter", "severity"], ["statusFilter", "status"], ["namespaceFilter", "namespace"], ["kindFilter", "kind"], ["nameFilter", "name"], ["keywordFilter", "keyword"]].forEach(function (pair) {
       $(pair[0]).addEventListener("input", function () { state.filters[pair[1]] = this.value; state.selectedFinding = null; renderFindings(); });
       $(pair[0]).addEventListener("change", function () { state.filters[pair[1]] = this.value; state.selectedFinding = null; renderFindings(); });
     });
