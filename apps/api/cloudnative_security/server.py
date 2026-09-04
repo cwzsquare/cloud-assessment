@@ -82,6 +82,28 @@ class ApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/checkpoints":
             self._json(self.store.list_checkpoints())
             return
+        if parsed.path == "/api/dashboard-data":
+            task_id = query.get("task_id", [None])[0]
+            report = self.store.get_report(task_id) if task_id else None
+            if not report:
+                self._json({"error": "not found"}, 404)
+                return
+            summary = report.get("summary", {})
+            self._json(
+                {
+                    "schema_version": "dashboard-data/v1",
+                    "task_id": task_id,
+                    "generated_at": report.get("generated_at"),
+                    "checkpoints": self.store.list_checkpoints(),
+                    "findings": self._query_findings(query, task_id),
+                    "report": report,
+                    "raw_snapshots": self.store.list_raw_snapshots(task_id),
+                    "rbac_matrix": self.store.query_rbac_matrix(task_id),
+                    "task_events": self.store.list_task_events(task_id),
+                    "integration_pipeline": summary.get("integration_pipeline"),
+                }
+            )
+            return
         if parsed.path == "/api/integration":
             task_id = query.get("task_id", [None])[0]
             report = self.store.get_report(task_id) if task_id else None

@@ -75,6 +75,7 @@ Available endpoints:
 - `GET /api/findings?task_id=pve-all-tools`
 - `GET /api/findings/{finding_id}`
 - `GET /api/raw-snapshots?task_id=pve-all-tools`
+- `GET /api/dashboard-data?task_id=pve-all-tools` — frontend render payload containing checkpoints, findings, report, raw snapshots, RBAC matrix, task events, and integration pipeline data.
 - `GET /api/reports/pve-all-tools`
 - `GET /api/reports/pve-all-tools.md`
 - `GET /api/reports/pve-all-tools.html`

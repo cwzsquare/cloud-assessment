@@ -127,6 +127,14 @@ class ApiServerTest(unittest.TestCase):
             self.assertIn("数据质量与限制", html)
 
         report = self.get_json("/api/reports/api-test-task")
+        dashboard_data = self.get_json("/api/dashboard-data?task_id=api-test-task")
+        self.assertEqual("dashboard-data/v1", dashboard_data["schema_version"])
+        self.assertEqual("api-test-task", dashboard_data["task_id"])
+        self.assertEqual(len(self.store.list_checkpoints()), len(dashboard_data["checkpoints"]))
+        self.assertTrue(dashboard_data["findings"])
+        self.assertEqual("api-test-task", dashboard_data["report"]["task_id"])
+        self.assertIn("integration_pipeline", dashboard_data)
+
         tool_summary = report["summary"]["tool_summary"]
         self.assertTrue(any(item["tool_id"] == "cloud_native" for item in tool_summary))
         self.assertTrue(all("finding_count" in item for item in tool_summary))

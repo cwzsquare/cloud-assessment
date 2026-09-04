@@ -36,7 +36,7 @@
     route = route || "overview";
     document.querySelectorAll(".tab").forEach(function (tab) { tab.classList.toggle("active", tab.dataset.route === route); });
     document.querySelectorAll(".view").forEach(function (view) { view.classList.toggle("active", view.id === route); });
-    var secondaryRoutes = ["targets", "cloudnative", "api", "smart", "metrics"];
+    var secondaryRoutes = ["integration", "targets", "cloudnative", "api", "smart", "metrics"];
     var secondary = document.querySelector(".nav-secondary");
     if (secondary) secondary.open = secondaryRoutes.indexOf(route) >= 0;
     if (location.hash !== "#" + route) location.hash = route;
@@ -63,22 +63,14 @@
   function loadTask(taskId) {
     state.taskId = taskId;
     var query = "?task_id=" + encodeURIComponent(taskId);
-    return Promise.all([
-      api("/api/checkpoints").catch(function () { return []; }),
-      api("/api/findings" + query).catch(function () { return []; }),
-      api("/api/reports/" + encodeURIComponent(taskId)).catch(function () { return null; }),
-      api("/api/raw-snapshots" + query).catch(function () { return []; }),
-      api("/api/assessments/" + encodeURIComponent(taskId) + "/rbac-matrix").catch(function () { return null; }),
-      api("/api/assessments/" + encodeURIComponent(taskId) + "/events").catch(function () { return []; }),
-      api("/api/integration" + query).catch(function () { return null; }),
-    ]).then(function (parts) {
-      state.checkpoints = parts[0] || [];
-      state.findings = parts[1] || [];
-      state.report = parts[2];
-      state.rawSnapshots = parts[3] || [];
-      state.rbacMatrix = parts[4];
-      state.taskEvents = parts[5] || [];
-      state.integration = parts[6] || (state.report && state.report.summary && state.report.summary.integration_pipeline) || null;
+    return api("/api/dashboard-data" + query).then(function (data) {
+      state.checkpoints = data.checkpoints || [];
+      state.findings = data.findings || [];
+      state.report = data.report || null;
+      state.rawSnapshots = data.raw_snapshots || [];
+      state.rbacMatrix = data.rbac_matrix || null;
+      state.taskEvents = data.task_events || [];
+      state.integration = data.integration_pipeline || null;
       if (state.report && state.report.findings && !state.findings.length) state.findings = state.report.findings;
       renderAll();
     });
@@ -347,7 +339,7 @@
     });
     var points = (pipeline.points || []).filter(function (point) { return point.group === state.integrationGroup; });
     if (!points.some(function (point) { return point.id === state.integrationPoint; })) state.integrationPoint = points[0] ? points[0].id : "";
-    var groupLabel = state.integrationGroup === "visualization" ? "3.2 集成可视化展示" : "3.1 工具集成数据处理";
+    var groupLabel = state.integrationGroup === "visualization" ? "页面展示能力" : "数据加工";
     $("integrationGroupHint").textContent = groupLabel + " · " + points.length + " 个验收小点";
     $("integrationCatalog").innerHTML = points.map(function (point) {
       return '<button class="integration-card ' + (point.id === state.integrationPoint ? "selected " : "") + 'mode-' + escapeHtml(point.mode) + '" data-integration-point="' + escapeHtml(point.id) + '" type="button">' +
