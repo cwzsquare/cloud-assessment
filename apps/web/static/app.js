@@ -562,20 +562,31 @@
     });
   }
 
+  function toolLabel(toolId) {
+    return ({
+      cloud_native: "云原生安全检查工具",
+      cloud_api_stub: "云上 API 安全工具（待接入）",
+      smart_cloud_stub: "智算云安全工具（待接入）",
+      registry_stub: "镜像仓库安全工具（待接入）",
+      platform: "平台派生检查",
+    })[toolId] || toolId || "未知来源工具";
+  }
+
   function renderFilters() {
-    fillSelect("toolFilter", state.findings.map(function (f) { return f.tool_id; }), "全部来源工具");
+    fillSelect("toolFilter", state.findings.map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
     fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项");
     fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部安全域");
     fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
     fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态");
   }
 
-  function fillSelect(id, values, label) {
+  function fillSelect(id, values, label, formatter) {
     var el = $(id), current = el.value;
     var options = Array.from(new Set(values.filter(Boolean))).sort();
-    el.innerHTML = '<option value="">' + label + '</option>' + options.map(function (v) { return '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>'; }).join("");
+    el.innerHTML = '<option value="">' + label + '</option>' + options.map(function (v) { return '<option value="' + escapeHtml(v) + '">' + escapeHtml(formatter ? formatter(v) : v) + '</option>'; }).join("");
     el.value = options.indexOf(current) >= 0 ? current : "";
   }
+
 
   function filteredFindings() {
     var domains = {};
