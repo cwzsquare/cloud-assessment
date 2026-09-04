@@ -133,7 +133,9 @@
     renderReport();
     renderIntegration();
     renderVisualization();
+    renderObservability();
   }
+
 
   function renderHeader() {
     var s = summary();
@@ -146,9 +148,9 @@
     $("conclusion").textContent = text(s.conclusion, "等待报告");
     $("checkpointTotal").textContent = text(s.checkpoint_total || state.checkpoints.length);
     $("findingTotal").textContent = text(s.finding_total || state.findings.length);
-    $("criticalHigh").textContent = "Critical/High FAIL: " + text((s.critical_fail_count || 0) + (s.high_fail_count || 0), "0");
+    $("criticalHigh").textContent = "严重 / 高风险未通过: " + text((s.critical_fail_count || 0) + (s.high_fail_count || 0), "0");
     $("evidenceCoverage").textContent = s.evidence_coverage === undefined ? "--" : s.evidence_coverage + "%";
-    $("scoredWeight").textContent = "Scored weight: " + text(s.scored_weight);
+    $("scoredWeight").textContent = "已计分权重: " + text(s.scored_weight);
     renderBars("severityBars", s.severity_count || countBy(state.findings, "severity"));
     renderBars("statusBars", s.status_count || countBy(state.findings, "status"));
     renderToolScores();
@@ -164,7 +166,8 @@
     var entries = Object.keys(data || {}).sort().map(function (k) { return [k, data[k]]; });
     var max = entries.reduce(function (m, e) { return Math.max(m, e[1]); }, 1);
     $(id).innerHTML = entries.length ? entries.map(function (e) {
-      return '<div class="bar-row"><span>' + e[0] + '</span><div><i style="width:' + Math.max(5, e[1] / max * 100) + '%"></i></div><b>' + e[1] + '</b></div>';
+      var label = id === "severityBars" ? severityLabel(e[0]) : id === "statusBars" ? statusLabel(e[0]) : e[0];
+      return '<div class="bar-row"><span>' + escapeHtml(label) + '</span><div><i style="width:' + Math.max(5, e[1] / max * 100) + '%"></i></div><b>' + e[1] + '</b></div>';
     }).join("") : '<p class="muted">暂无数据</p>';
   }
 
@@ -176,8 +179,8 @@
       var health = state.report && state.report.adapter_health && state.report.adapter_health[id];
       var status = tool.status || (health && health.status) || "ready";
       var stub = tool.stub_mode || status === "stub";
-      var label = (stub ? "stub/mock · " : "") + status;
-      return '<div class="tool-item"><strong>' + escapeHtml(text(id)) + '</strong><span>' + escapeHtml(text(tool.finding_count, "")) + '</span><small>' + escapeHtml(label) + '</small></div>';
+      var label = stub ? "待接入" : status === "ready" ? "已就绪" : status === "error" ? "异常" : status;
+      return '<div class="tool-item"><strong>' + escapeHtml(text(id)) + '</strong><span>' + escapeHtml(text(tool.finding_count, "0")) + ' 个问题</span><small>' + escapeHtml(label) + '</small></div>';
     }).join("") : '<p class="muted">暂无工具数据</p>';
   }
 
@@ -197,8 +200,8 @@
       return Object.assign(row, { risk: risk });
     }).sort(function (a, b) { return b.risk - a.risk; });
     $("toolScoreGrid").innerHTML = rows.length ? rows.map(function (row) {
-      return '<div class="score-row"><strong>' + escapeHtml(row.id) + '</strong><span>' + row.total + ' findings</span><b>F ' + row.fail + ' · W ' + row.warn + ' · U ' + row.unknown + '</b></div>';
-    }).join("") : '<p class="muted">暂无工具态势</p>';
+      return '<div class="score-row"><strong>' + escapeHtml(row.id) + '</strong><span>' + row.total + ' 个问题</span><b>失败 ' + row.fail + ' · 警告 ' + row.warn + ' · 信息不足 ' + row.unknown + '</b></div>';
+    }).join("") : '<p class="muted">暂无工具结果</p>';
   }
 
   function renderDomainRadar(domains) {
@@ -245,28 +248,33 @@
       return row;
     }).sort(function (a, b) { return b.risk - a.risk; }).slice(0, 8);
     $("namespaceRisks").innerHTML = rows.length ? rows.map(function (row) {
-      return '<div class="risk-row"><strong>' + escapeHtml(row.namespace) + '</strong><span>' + row.total + ' findings</span><b>C ' + row.critical + ' · H ' + row.high + ' · F ' + row.fail + '</b></div>';
-    }).join("") : '<p class="muted">暂无 namespace 风险</p>';
+      return '<div class="risk-row"><strong>' + escapeHtml(row.namespace) + '</strong><span>' + row.total + ' 个问题</span><b>严重 ' + row.critical + ' · 高风险 ' + row.high + ' · 失败 ' + row.fail + '</b></div>';
+    }).join("") : '<p class="muted">暂无资源范围风险</p>';
   }
 
   function renderQuality(q) {
-    var items = [["completeness", "完整性"], ["freshness", "新鲜度"], ["unknown_rate", "Unknown 率"], ["schema_error_count", "Schema 错误"], ["raw_snapshot_count", "Raw Snapshots"], ["normalized_finding_count", "规范 Findings"]];
+    var items = [["completeness", "完整性"], ["freshness", "新鲜度"], ["unknown_rate", "信息不足比例"], ["schema_error_count", "数据格式错误"], ["raw_snapshot_count", "原始结果"], ["normalized_finding_count", "统一问题"]];
     $("qualityGrid").innerHTML = items.map(function (item) { return '<div><span>' + item[1] + '</span><strong>' + escapeHtml(text(q[item[0]])) + '</strong></div>'; }).join("");
   }
 
   function renderRemediationPriority(items) {
-    var rows = (items && items.length ? items : fallbackRemediationPriority()).slice(0, 12);
+    var rows = (items && items.length ? items : fallbackRemediationPriority());
+    var visibleRows = rows.slice(0, 6);
     var counts = rows.reduce(function (acc, row) {
       var priority = row.priority || "P3";
       acc[priority] = (acc[priority] || 0) + 1;
       return acc;
     }, {});
     $("prioritySummary").innerHTML = ["P0", "P1", "P2", "P3"].map(function (priority) {
-      return '<div><span>' + priority + '</span><strong>' + escapeHtml(text(counts[priority], "0")) + '</strong></div>';
+      return '<div><span>' + escapeHtml(priorityLabel(priority)) + '</span><strong>' + escapeHtml(text(counts[priority], "0")) + '</strong></div>';
     }).join("");
-    $("priorityList").innerHTML = rows.length ? rows.map(function (row) {
-      return '<div class="priority-row ' + escapeHtml(text(row.priority, "P3").toLowerCase()) + '"><strong>' + escapeHtml(text(row.priority, "P3")) + '</strong><span><code>' + escapeHtml(text(row.checkpoint_id)) + '</code> ' + escapeHtml(text(row.title)) + '</span><small>' + escapeHtml(text(row.asset)) + '</small><p>' + escapeHtml(text(row.remediation)) + '</p></div>';
-    }).join("") : '<p class="muted">暂无整改优先级</p>';
+    $("priorityList").innerHTML = visibleRows.length ? visibleRows.map(function (row) {
+      return '<div class="priority-row ' + escapeHtml(text(row.priority, "P3").toLowerCase()) + '"><strong>' + escapeHtml(priorityLabel(row.priority, "P3")) + '</strong><span><code>' + escapeHtml(text(row.checkpoint_id)) + '</code> ' + escapeHtml(text(row.title)) + '</span><small>' + escapeHtml(text(row.asset)) + '</small><p>' + escapeHtml(text(row.remediation)) + '</p></div>';
+    }).join("") + (rows.length > visibleRows.length ? '<p class="muted">已优先显示最紧急的 6 项，完整问题请打开“风险问题”。</p>' : "") : '<p class="muted">暂无整改优先级</p>';
+  }
+
+  function priorityLabel(priority) {
+    return ({ P0: "立即处理", P1: "优先处理", P2: "计划处理", P3: "持续观察" })[priority] || priority || "持续观察";
   }
 
   function fallbackRemediationPriority() {
@@ -289,22 +297,25 @@
     }).sort(function (a, b) { return (b.risk_score || 0) - (a.risk_score || 0); });
   }
 
+  function integrationData() {
+    return state.integration || (state.report && state.report.summary && state.report.summary.integration_pipeline) || { stats: {}, flow: [], points: [], adapters: [] };
+  }
+
   function renderProgress() {
     var events = state.taskEvents || [];
     $("progressTimeline").innerHTML = events.length ? events.map(function (event) {
       return '<div class="timeline-row ' + escapeHtml(text(event.status).toLowerCase()) + '"><span>' + escapeHtml(text(event.progress, "0")) + '%</span><strong>' + escapeHtml(text(event.stage)) + '</strong><p>' + escapeHtml(text(event.message)) + '</p><small>' + escapeHtml(text(event.created_at, "")) + '</small></div>';
     }).join("") : '<p class="muted">暂无任务进度事件</p>';
   }
-  function integrationData() {
-    return state.integration || (state.report && state.report.summary && state.report.summary.integration_pipeline) || { stats: {}, flow: [], points: [], adapters: [] };
-  }
-
   function statusLabel(status) {
-    return status === "PASS" ? "已实现" : status === "WARN" ? "需关注" : status === "FAIL" ? "异常" : "待接入";
+    return status === "PASS" ? "已通过" : status === "WARN" ? "需关注" : status === "FAIL" ? "异常" : status === "UNKNOWN" ? "信息不足" : status === "NOT_APPLICABLE" ? "不适用" : "待接入";
   }
 
+  function severityLabel(severity) {
+    return ({ critical: "严重", high: "高风险", medium: "中风险", low: "低风险", info: "提示" })[String(severity || "").toLowerCase()] || severity || "未标记";
+  }
   function modeLabel(mode) {
-    return mode === "real" ? "真实模块" : mode === "placeholder" ? "占位插槽" : "已实现";
+    return mode === "real" ? "已接入工具" : mode === "placeholder" ? "待接入工具" : "已实现";
   }
 
   function statCard(label, value, note, tone) {
@@ -315,16 +326,19 @@
     var pipeline = integrationData();
     var stats = pipeline.stats || {};
     $("integrationAdapterCount").textContent = text(stats.adapter_count, "0");
-    $("integrationSchema").textContent = text(pipeline.schema_version, "integration/v1");
+    $("integrationSchema").textContent = "统一结果格式";
+    $("integrationSchema").title = text(pipeline.schema_version, "integration/v1");
     $("integrationStats").innerHTML = [
-      statCard("Raw snapshots", stats.raw_snapshot_count, "原始工具输出快照", "blue"),
-      statCard("Normalized findings", stats.normalized_finding_count, "统一 Finding 结果", "green"),
-      statCard("质量评分", stats.quality_score === undefined ? "--" : stats.quality_score + "%", "完整性 / 新鲜度 / Unknown", "purple"),
-      statCard("真实接入", (pipeline.adapters || []).filter(function (item) { return item.mode === "real"; }).length, "云原生评估链路", "orange"),
+      statCard("原始结果", stats.raw_snapshot_count, "工具返回的原始输出", "blue"),
+      statCard("统一问题", stats.normalized_finding_count, "整理后的风险问题", "green"),
+      statCard("数据可信度", stats.quality_score === undefined ? "--" : stats.quality_score + "%", "完整性 / 新鲜度 / 信息不足", "purple"),
+      statCard("已接入工具", (pipeline.adapters || []).filter(function (item) { return item.mode === "real"; }).length, "已连接到评估流程", "orange"),
     ].join("");
     $("integrationFlow").innerHTML = (pipeline.flow || []).map(function (item, index) {
-      return '<div class="pipeline-step"><div class="pipeline-index">0' + (index + 1) + '</div><strong>' + escapeHtml(text(item.label)) + '</strong><span>' + escapeHtml(text(item.detail)) + '</span></div>' + (index < pipeline.flow.length - 1 ? '<div class="pipeline-arrow">→</div>' : "");
-    }).join("") || '<p class="muted">暂无管线数据，请先运行评估任务。</p>';
+      var labels = { collect: "收集结果", normalize: "统一整理", quality: "检查数据质量", aggregate: "形成评估结论" };
+      var details = { collect: "读取已接入工具的输出", normalize: "整理为统一的问题列表", quality: "检查完整性与信息不足", aggregate: "生成报告与安全总览" };
+      return '<div class="pipeline-step"><div class="pipeline-index">0' + (index + 1) + '</div><strong>' + escapeHtml(labels[item.key] || text(item.label)) + '</strong><span>' + escapeHtml(details[item.key] || text(item.detail)) + '</span></div>' + (index < pipeline.flow.length - 1 ? '<div class="pipeline-arrow" aria-hidden="true"></div>' : "");
+    }).join("") || '<p class="muted">暂无数据流转记录，请先运行评估任务。</p>';
     document.querySelectorAll(".integration-group").forEach(function (button) {
       button.classList.toggle("active", button.dataset.integrationGroup === state.integrationGroup);
     });
@@ -335,23 +349,23 @@
     $("integrationCatalog").innerHTML = points.map(function (point) {
       return '<button class="integration-card ' + (point.id === state.integrationPoint ? "selected " : "") + 'mode-' + escapeHtml(point.mode) + '" data-integration-point="' + escapeHtml(point.id) + '" type="button">' +
         '<span class="card-code">' + escapeHtml(point.code) + '</span><strong>' + escapeHtml(point.name) + '</strong><small>' + escapeHtml(point.stage) + '</small><div><span class="pill ' + escapeHtml(text(point.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(point.status)) + '</span><em>' + escapeHtml(modeLabel(point.mode)) + '</em></div></button>';
-    }).join("") || '<p class="empty">暂无验收小点数据</p>';
+    }).join("") || '<p class="empty">暂无验收能力数据</p>';
     var selected = points.find(function (point) { return point.id === state.integrationPoint; });
     renderIntegrationDetail(selected);
     $("integrationAdapters").innerHTML = (pipeline.adapters || []).map(function (adapter) {
-      return '<div class="adapter-card ' + (adapter.mode === "real" ? "real" : "placeholder") + '"><div><strong>' + escapeHtml(adapter.tool_id) + '</strong><span class="adapter-status">' + escapeHtml(adapter.mode === "real" ? "REAL" : "PLACEHOLDER") + '</span></div><p>' + escapeHtml(text(adapter.schema_version)) + ' · ' + escapeHtml(text(adapter.finding_count, "0")) + ' findings</p><small>' + escapeHtml(text(adapter.raw_kind)) + '</small></div>';
-    }).join("") || '<p class="muted">暂无适配器状态</p>';
+      return '<div class="adapter-card ' + (adapter.mode === "real" ? "real" : "placeholder") + '"><div><strong>' + escapeHtml(adapter.tool_id) + '</strong><span class="adapter-status">' + escapeHtml(adapter.mode === "real" ? "已接入" : "待接入") + '</span></div><p>' + escapeHtml(text(adapter.schema_version)) + ' · ' + escapeHtml(text(adapter.finding_count, "0")) + ' 个问题</p><small>' + escapeHtml(text(adapter.raw_kind)) + '</small></div>';
+    }).join("") || '<p class="muted">暂无工具接入状态</p>';
   }
 
   function renderIntegrationDetail(point) {
     if (!point) {
-      $("integrationDetail").innerHTML = '<div class="detail-empty"><span class="eyebrow">ACCEPTANCE EVIDENCE</span><h2>选择一个标书小点</h2><p>运行评估任务后，点击左侧能力卡片查看实现状态、数据证据与验收口径。</p></div>';
+      $("integrationDetail").innerHTML = '<div class="detail-empty"><span class="eyebrow">验收依据</span><h2>选择一个能力</h2><p>运行评估任务后，点击左侧能力卡片查看实现状态、数据证据与验收口径。</p></div>';
       return;
     }
     $("integrationDetail").innerHTML = '<div class="detail-kicker"><span class="card-code">' + escapeHtml(point.code) + '</span><span class="pill ' + escapeHtml(text(point.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(point.status)) + '</span></div>' +
       '<h2>' + escapeHtml(point.name) + '</h2><p class="detail-lead">' + escapeHtml(point.evidence) + '</p>' +
-      '<div class="evidence-grid"><div><span>实现模式</span><strong>' + escapeHtml(modeLabel(point.mode)) + '</strong></div><div><span>实现指标</span><strong>' + escapeHtml(point.metric) + '</strong></div><div><span>Finding 证据</span><strong>' + escapeHtml(text(point.finding_count, "0")) + ' 条</strong></div><div><span>权重</span><strong>' + escapeHtml(text(point.weight)) + '</strong></div></div>' +
-      '<div class="detail-callout"><span>数据处理链路</span><strong>' + escapeHtml(point.rule_group) + '</strong><p>结果进入统一评估报告，并可从 Findings 页面继续下钻原始证据和整改建议。</p></div>';
+      '<div class="evidence-grid"><div><span>实现模式</span><strong>' + escapeHtml(modeLabel(point.mode)) + '</strong></div><div><span>实现指标</span><strong>' + escapeHtml(point.metric) + '</strong></div><div><span>问题证据</span><strong>' + escapeHtml(text(point.finding_count, "0")) + ' 条</strong></div><div><span>权重</span><strong>' + escapeHtml(text(point.weight)) + '</strong></div></div>' +
+      '<div class="detail-callout"><span>数据处理链路</span><strong>' + escapeHtml(point.rule_group) + '</strong><p>结果进入统一评估报告，并可从风险问题页面继续查看原始依据和整改建议。</p></div>';
   }
 
   function renderVisualization() {
@@ -361,13 +375,13 @@
     $("visualizationScore").textContent = summaryData.evidence_coverage === undefined ? "--" : summaryData.evidence_coverage + "%";
     $("visualizationStats").innerHTML = [
       statCard("综合安全评分", summaryData.overall_score, text(summaryData.conclusion, "等待报告"), "blue"),
-      statCard("覆盖检查点", summaryData.checkpoint_total, "指标体系覆盖", "green"),
-      statCard("风险发现", summaryData.finding_total, "统一结果集", "orange"),
-      statCard("筛选维度", "9", "工具 / 域 / 严重性 / 对象", "purple"),
+      statCard("评估指标", summaryData.checkpoint_total, "指标体系覆盖", "green"),
+      statCard("风险问题", summaryData.finding_total, "统一结果集", "orange"),
+      statCard("筛选维度", "9", "来源工具 / 安全域 / 风险等级 / 对象", "purple"),
     ].join("");
     $("vizPreview").innerHTML = '<div class="viz-score"><span>综合安全评分</span><strong>' + escapeHtml(text(summaryData.overall_score)) + '</strong><small>' + escapeHtml(text(summaryData.conclusion, "暂无结论")) + '</small></div>' +
       '<div class="viz-bars">' + Object.keys(summaryData.severity_count || {}).map(function (key) { return '<div><span>' + escapeHtml(key) + '</span><i style="width:' + Math.min(100, Number(summaryData.severity_count[key]) * 12 + 8) + '%"></i><b>' + escapeHtml(summaryData.severity_count[key]) + '</b></div>'; }).join("") + '</div>' +
-      '<div class="viz-foot"><span>质量评分</span><strong>' + escapeHtml(text(stats.quality_score, "--")) + '%</strong><span>工具覆盖</span><strong>' + escapeHtml(text(stats.adapter_count, "0")) + ' adapters</strong></div>';
+      '<div class="viz-foot"><span>数据可信度</span><strong>' + escapeHtml(text(stats.quality_score, "--")) + '%</strong><span>来源工具</span><strong>' + escapeHtml(text(stats.adapter_count, "0")) + ' 个</strong></div>';
     var points = (pipeline.points || []).filter(function (point) { return point.group === "visualization"; });
     if (!points.some(function (point) { return point.id === state.visualizationPoint; })) state.visualizationPoint = points[0] ? points[0].id : "";
     $("visualizationCatalog").innerHTML = points.map(function (point) {
@@ -375,6 +389,68 @@
     }).join("") || '<p class="empty">暂无可视化能力数据</p>';
     var selected = points.find(function (point) { return point.id === state.visualizationPoint; });
     $("visualizationDetail").innerHTML = selected ? '<div class="detail-kicker"><span class="card-code">' + escapeHtml(selected.code) + '</span><span class="pill ' + escapeHtml(text(selected.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(selected.status)) + '</span></div><h2>' + escapeHtml(selected.name) + '</h2><p class="detail-lead">' + escapeHtml(selected.evidence) + '</p><div class="detail-callout"><span>截图佐证定位</span><strong>' + escapeHtml(selected.code + " · " + selected.name) + '</strong><p>该能力已在本工作台形成独立可见状态，可直接用于投标技术应答和现场演示。</p></div>' : '<p class="muted">选择能力查看验收证据。</p>';
+  }
+
+  function observabilityAssets() {
+    var byLabel = {};
+    state.findings.forEach(function (finding) {
+      var asset = assetOf(finding);
+      var label = asset.label || "_cluster";
+      byLabel[label] = byLabel[label] || { label: label, kind: asset.kind || "资源", namespace: asset.namespace || "_cluster", name: asset.name || label, findings: [] };
+      byLabel[label].findings.push(finding);
+    });
+    return Object.keys(byLabel).map(function (key) {
+      var asset = byLabel[key];
+      asset.fail = asset.findings.filter(function (finding) { return finding.status === "FAIL"; }).length;
+      asset.warn = asset.findings.filter(function (finding) { return finding.status === "WARN"; }).length;
+      asset.unknown = asset.findings.filter(function (finding) { return finding.status === "UNKNOWN"; }).length;
+      asset.level = asset.fail ? "risk" : asset.warn ? "warn" : asset.unknown ? "unknown" : "safe";
+      return asset;
+    }).sort(function (a, b) { return (b.fail * 3 + b.warn) - (a.fail * 3 + a.warn) || a.label.localeCompare(b.label); });
+  }
+
+  function resourceKindLabel(kind) {
+    return ({ Deployment: "应用服务", StatefulSet: "有状态服务", DaemonSet: "节点服务", Pod: "运行实例", Service: "服务入口", Ingress: "访问入口", Secret: "敏感配置", ConfigMap: "配置文件", PersistentVolumeClaim: "存储卷" })[kind] || kind || "资源";
+  }
+
+  function observabilityAssetCard(asset) {
+    var label = asset.name && asset.name !== asset.label ? asset.name : asset.label;
+    return '<article class="asset-overview-card ' + escapeHtml(asset.level) + '"><div><span>' + escapeHtml(resourceKindLabel(asset.kind)) + '</span><strong>' + escapeHtml(label) + '</strong></div><small>' + escapeHtml(asset.namespace) + ' · ' + escapeHtml(asset.findings.length) + ' 个相关结果</small><b>' + (asset.fail ? "高风险 " + asset.fail : asset.warn ? "需关注 " + asset.warn : asset.unknown ? "信息不足 " + asset.unknown : "暂未发现问题") + '</b></article>';
+  }
+
+  function topologyLane(label, assets, emptyText) {
+    return '<div class="topology-lane"><h3>' + escapeHtml(label) + '</h3>' + (assets.length ? assets.slice(0, 4).map(function (asset) {
+      return '<div class="topology-node ' + escapeHtml(asset.level) + '"><i></i><span>' + escapeHtml(resourceKindLabel(asset.kind)) + '</span><strong>' + escapeHtml(asset.name || asset.label) + '</strong><small>' + escapeHtml(asset.namespace) + '</small></div>';
+    }).join("") : '<p class="topology-empty">' + escapeHtml(emptyText) + '</p>') + '</div>';
+  }
+
+  function renderObservability() {
+    var assets = observabilityAssets();
+    var riskyAssets = assets.filter(function (asset) { return asset.level === "risk" || asset.level === "warn"; });
+    var namespaces = Array.from(new Set(assets.map(function (asset) { return asset.namespace; })));
+    $("observabilityAssetCount").textContent = text(assets.length, "0");
+    $("observabilityStats").innerHTML = [
+      statCard("关联资源", assets.length, "与当前问题相关的资源", "blue"),
+      statCard("需要关注", riskyAssets.length, "存在失败或警告", "orange"),
+      statCard("资源范围", namespaces.length, "涉及命名空间", "green"),
+      statCard("链路数据", "待接入", "OpenTelemetry / Jaeger / SkyWalking", "purple"),
+    ].join("");
+    var entry = assets.filter(function (asset) { return /Service|Ingress|Gateway|API/i.test(asset.kind); });
+    var services = assets.filter(function (asset) { return /Deployment|StatefulSet|DaemonSet|Pod/i.test(asset.kind); });
+    var data = assets.filter(function (asset) { return entry.indexOf(asset) < 0 && services.indexOf(asset) < 0; });
+    $("serviceTopology").innerHTML = '<p class="topology-note">仅显示与当前问题关联的资源（共 ' + escapeHtml(assets.length) + ' 条），按资源类型分组；分组之间不是实际调用关系。</p><div class="topology-lanes">' +
+      topologyLane("访问入口", entry, "暂未识别服务入口") +
+      '<div class="topology-connector" aria-hidden="true"></div>' +
+      topologyLane("运行服务", services, "暂未识别运行服务") +
+      '<div class="topology-connector" aria-hidden="true"></div>' +
+      topologyLane("配置与存储", data, "暂未识别配置或存储") +
+      '</div>';
+    $("traceWaterfall").innerHTML = '<div class="trace-empty"><div class="trace-skeleton"><i></i><i></i><i></i></div><h3>还没有调用链数据</h3><p>当前任务包含配置、权限和安全检查结果，但尚未接入请求链路数据，因此暂时无法展示耗时、错误传播或真实调用关系。</p><a class="ghost-button" href="#integration">查看工具接入状态</a></div>';
+    $("assetOverview").innerHTML = assets.length ? assets.slice(0, 6).map(observabilityAssetCard).join("") : '<p class="empty">当前任务还没有可展示的资源。</p>';
+    var matrix = state.rbacMatrix || {};
+    var matrixSummary = matrix.summary || {};
+    var dangerous = matrix.dangerous_rows || [];
+    $("policyOverview").innerHTML = matrixSummary.matrix_row_count ? '<div class="policy-kpis"><div><span>权限主体</span><strong>' + escapeHtml(text(matrixSummary.subject_count, "0")) + '</strong></div><div><span>权限关系</span><strong>' + escapeHtml(text(matrixSummary.matrix_row_count, "0")) + '</strong></div><div><span>需要关注</span><strong class="danger-number">' + escapeHtml(text(matrixSummary.dangerous_row_count, "0")) + '</strong></div></div><div class="policy-list">' + dangerous.slice(0, 4).map(function (row) { return '<div><strong>' + escapeHtml(text(row.subject)) + '</strong><span>' + escapeHtml(text(row.scope, "集群范围")) + '</span><b>' + escapeHtml((row.danger_reasons || []).join("、") || "权限范围较大") + '</b></div>'; }).join("") + '</div>' : '<div class="trace-empty compact"><h3>暂未生成权限摘要</h3><p>完成一次云原生评估后，这里会显示需要关注的权限关系。</p></div>';
   }
 
   function renderTargets() {
@@ -475,10 +551,10 @@
     var matrix = state.rbacMatrix || {};
     var summary = matrix.summary || {};
     var rows = filteredRbacRows(matrix).slice(0, 80);
-    $("rbacSummary").textContent = "Subjects " + text(summary.subject_count, "0") + " · Rows " + text(summary.matrix_row_count, "0") + " · Dangerous " + text(summary.dangerous_row_count, "0") + " · Matched " + rows.length;
+    $("rbacSummary").textContent = "权限主体 " + text(summary.subject_count, "0") + " · 权限关系 " + text(summary.matrix_row_count, "0") + " · 需关注 " + text(summary.dangerous_row_count, "0") + " · 当前显示 " + rows.length;
     $("rbacRows").innerHTML = rows.map(function (row) {
       return '<tr><td>' + escapeHtml(text(row.subject)) + '</td><td>' + escapeHtml(text(row.scope)) + '</td><td>' + escapeHtml(text(row.role_kind)) + '/' + escapeHtml(text(row.role_name)) + '</td><td>' + escapeHtml((row.resources || []).join(", ")) + '</td><td>' + escapeHtml((row.verbs || []).join(", ")) + '</td><td>' + escapeHtml((row.danger_reasons || []).join(", ") || "normal") + '</td></tr>';
-    }).join("") || '<tr><td colspan="6" class="empty">暂无 RBAC 矩阵数据</td></tr>';
+    }).join("") || '<tr><td colspan="6" class="empty">暂无权限关系数据</td></tr>';
   }
 
   function filteredRbacRows(matrix) {
@@ -492,11 +568,11 @@
   }
 
   function renderFilters() {
-    fillSelect("toolFilter", state.findings.map(function (f) { return f.tool_id; }), "全部工具");
-    fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查点");
-    fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部域");
-    fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部严重性");
-    fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部状态");
+    fillSelect("toolFilter", state.findings.map(function (f) { return f.tool_id; }), "全部来源工具");
+    fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项");
+    fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部安全域");
+    fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
+    fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态");
   }
 
   function fillSelect(id, values, label) {
@@ -528,8 +604,8 @@
     var rows = filteredFindings();
     $("findingRows").innerHTML = rows.map(function (f, index) {
       var asset = assetOf(f);
-      return '<tr data-index="' + index + '"><td><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(text(f.severity)) + '</span></td><td><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(text(f.status)) + '</span></td><td><code>' + escapeHtml(text(f.checkpoint_id)) + '</code></td><td>' + escapeHtml(text(f.tool_id)) + '</td><td>' + escapeHtml(asset.label) + '</td><td>' + escapeHtml(text(f.title)) + '</td></tr>';
-    }).join("") || '<tr><td colspan="6" class="empty">没有匹配的 finding</td></tr>';
+      return '<tr data-index="' + index + '"><td><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span></td><td><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span></td><td><code>' + escapeHtml(text(f.checkpoint_id)) + '</code></td><td>' + escapeHtml(text(f.tool_id)) + '</td><td>' + escapeHtml(asset.label) + '</td><td>' + escapeHtml(text(f.title)) + '</td></tr>';
+    }).join("") || '<tr><td colspan="6" class="empty">没有匹配的问题</td></tr>';
     document.querySelectorAll("#findingRows tr[data-index]").forEach(function (row) {
       row.addEventListener("click", function () { state.selectedFinding = rows[Number(row.dataset.index)]; renderFindingDetail(); });
     });
@@ -539,18 +615,18 @@
 
   function renderFindingDetail() {
     var f = state.selectedFinding;
-    if (!f) { $("findingDetail").innerHTML = '<h2>Finding 详情</h2><p class="muted">暂无数据</p>'; return; }
+    if (!f) { $("findingDetail").innerHTML = '<h2>问题详情</h2><p class="muted">暂无数据</p>'; return; }
     var evidence = safeJson(f.evidence_json, f.evidence || []);
     var asset = assetOf(f);
     var related = relatedFindings(f).slice(0, 8);
-    $("findingDetail").innerHTML = '<div class="detail-head"><h2>' + escapeHtml(text(f.title)) + '</h2><button id="copyRemediationBtn" type="button">复制整改</button></div>' +
-      '<div class="detail-tags"><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(text(f.severity)) + '</span><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(text(f.status)) + '</span><code>' + escapeHtml(text(f.checkpoint_id)) + '</code><code>' + escapeHtml(text(f.rule_id)) + '</code></div>' +
-      '<h3>Asset</h3><div class="asset-card"><strong>' + escapeHtml(asset.label) + '</strong><span>' + escapeHtml([asset.namespace, asset.kind, asset.name].filter(Boolean).join(" / ") || "_cluster") + '</span></div>' +
-      '<h3>Evidence</h3><pre>' + escapeHtml(JSON.stringify(evidence, null, 2)) + '</pre>' +
-      '<h3>Remediation</h3><p id="remediationText">' + escapeHtml(text(f.remediation, "暂无修复建议")) + '</p>' +
-      '<h3>同资产 Findings</h3><div class="related-findings">' + (related.length ? related.map(function (item) {
-        return '<button class="related-finding" data-finding-id="' + escapeHtml(text(item.id)) + '" type="button"><span class="pill ' + escapeHtml(text(item.status).toLowerCase()) + '">' + escapeHtml(text(item.status)) + '</span><code>' + escapeHtml(text(item.checkpoint_id)) + '</code><strong>' + escapeHtml(text(item.title)) + '</strong></button>';
-      }).join("") : '<p class="muted">暂无同资产 finding</p>') + '</div>';
+    $("findingDetail").innerHTML = '<div class="detail-head"><h2>' + escapeHtml(text(f.title)) + '</h2><button id="copyRemediationBtn" type="button">复制处理建议</button></div>' +
+      '<div class="detail-tags"><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span><code>' + escapeHtml(text(f.checkpoint_id)) + '</code><code>' + escapeHtml(text(f.rule_id)) + '</code></div>' +
+      '<h3>影响对象</h3><div class="asset-card"><strong>' + escapeHtml(asset.label) + '</strong><span>' + escapeHtml([asset.namespace, asset.kind, asset.name].filter(Boolean).join(" / ") || "整个评估范围") + '</span></div>' +
+      '<h3>发现依据</h3><pre>' + escapeHtml(JSON.stringify(evidence, null, 2)) + '</pre>' +
+      '<h3>建议处理</h3><p id="remediationText">' + escapeHtml(text(f.remediation, "暂无处理建议")) + '</p>' +
+      '<h3>同一对象的其他问题</h3><div class="related-findings">' + (related.length ? related.map(function (item) {
+        return '<button class="related-finding" data-finding-id="' + escapeHtml(text(item.id)) + '" type="button"><span class="pill ' + escapeHtml(text(item.status).toLowerCase()) + '">' + escapeHtml(statusLabel(item.status)) + '</span><code>' + escapeHtml(text(item.checkpoint_id)) + '</code><strong>' + escapeHtml(text(item.title)) + '</strong></button>';
+      }).join("") : '<p class="muted">暂无其他问题</p>') + '</div>';
     $("copyRemediationBtn").addEventListener("click", function () { copyRemediation(f.remediation || ""); });
     document.querySelectorAll(".related-finding").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -581,8 +657,8 @@
   }
 
   function renderStubs() {
-    renderStubSection("cloud_api_stub", "apiStubStats", "apiStubDetails", "API findings");
-    renderStubSection("smart_cloud_stub", "smartStubStats", "smartStubDetails", "智算 findings");
+    renderStubSection("cloud_api_stub", "apiStubStats", "apiStubDetails", "API 工具问题");
+    renderStubSection("smart_cloud_stub", "smartStubStats", "smartStubDetails", "智算云工具问题");
   }
 
   function renderStubSection(toolId, statsId, detailsId, label) {
@@ -598,20 +674,20 @@
     var warn = findings.filter(function (f) { return f.status === "WARN"; }).length;
     var unknown = findings.filter(function (f) { return f.status === "UNKNOWN"; }).length;
     return '<div><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(findings.length) + '</strong></div>' +
-      '<div><span>F/W/U</span><strong>' + fail + '/' + warn + '/' + unknown + '</strong></div>' +
-      '<div><span>Schema</span><strong>' + escapeHtml(text(snapshot.schema_version, "stub/v1")) + '</strong></div>';
+      '<div><span>失败 / 警告 / 信息不足</span><strong>' + fail + ' / ' + warn + ' / ' + unknown + '</strong></div>' +
+      '<div><span>数据版本</span><strong>' + escapeHtml(text(snapshot.schema_version, "stub/v1")) + '</strong></div>';
   }
 
   function stubDetails(toolId, findings, raw) {
     var params = raw.target_parameters || {};
     var capabilities = raw.capabilities || [];
     var rows = findings.map(function (finding) {
-      return '<tr><td><span class="pill ' + escapeHtml(text(finding.status).toLowerCase()) + '">' + escapeHtml(text(finding.status)) + '</span></td><td><span class="sev ' + escapeHtml(text(finding.severity).toLowerCase()) + '">' + escapeHtml(text(finding.severity)) + '</span></td><td><code>' + escapeHtml(text(finding.rule_id)) + '</code></td><td>' + escapeHtml(text(finding.title)) + '</td></tr>';
-    }).join("") || '<tr><td colspan="4" class="empty">暂无 stub finding</td></tr>';
+      return '<tr><td><span class="pill ' + escapeHtml(text(finding.status).toLowerCase()) + '">' + escapeHtml(statusLabel(finding.status)) + '</span></td><td><span class="sev ' + escapeHtml(text(finding.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(finding.severity)) + '</span></td><td><code>' + escapeHtml(text(finding.rule_id)) + '</code></td><td>' + escapeHtml(text(finding.title)) + '</td></tr>';
+    }).join("") || '<tr><td colspan="4" class="empty">暂无可用问题结果，工具可能尚未接入。</td></tr>';
     return '<div class="stub-meta">' +
-      '<div><h3>Parameters</h3><pre>' + escapeHtml(JSON.stringify(params, null, 2)) + '</pre></div>' +
-      '<div><h3>Capabilities</h3><div class="tag-list">' + (capabilities.length ? capabilities.map(function (item) { return '<span>' + escapeHtml(item) + '</span>'; }).join("") : '<span>stub</span>') + '</div></div>' +
-      '</div><h3>' + escapeHtml(toolId) + '</h3><div class="table-wrap"><table><thead><tr><th>Status</th><th>Severity</th><th>Rule</th><th>Title</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<div><h3>调用参数</h3><pre>' + escapeHtml(JSON.stringify(params, null, 2)) + '</pre></div>' +
+      '<div><h3>检查能力</h3><div class="tag-list">' + (capabilities.length ? capabilities.map(function (item) { return '<span>' + escapeHtml(item) + '</span>'; }).join("") : '<span>待接入</span>') + '</div></div>' +
+      '</div><h3>' + escapeHtml(toolId === "cloud_api_stub" ? "API 工具" : "智算云工具") + '</h3><div class="table-wrap"><table><thead><tr><th>状态</th><th>风险等级</th><th>规则编号</th><th>问题描述</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function renderMetrics() {

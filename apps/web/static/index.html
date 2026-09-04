@@ -14,23 +14,24 @@
           <p id="taskMeta">等待加载评估任务</p>
         </div>
         <div class="task-picker">
-          <label for="taskSelect">Task</label>
+          <label for="taskSelect">当前评估</label>
           <select id="taskSelect"></select>
           <button id="refreshBtn" type="button">刷新</button>
         </div>
       </header>
 
-      <nav class="tabs" aria-label="Dashboard views">
-        <button class="tab active" data-route="overview" type="button">总览</button>
+      <nav class="tabs" aria-label="工作台页面">
+        <button class="tab active" data-route="overview" type="button">安全总览</button>
+        <button class="tab tab-outcome" data-route="findings" type="button">风险问题</button>
+        <button class="tab tab-outcome" data-route="observability" type="button">服务与资源</button>
+        <button class="tab tab-outcome" data-route="visualization" type="button">集成可视化</button>
         <button class="tab tab-featured" data-route="integration" type="button">工具集成中心</button>
-        <button class="tab tab-featured" data-route="visualization" type="button">集成可视化</button>
-        <button class="tab" data-route="targets" type="button">目标/任务</button>
-        <button class="tab" data-route="cloudnative" type="button">云原生详情</button>
-        <button class="tab" data-route="api" type="button">API Stub</button>
-        <button class="tab" data-route="smart" type="button">智算云 Stub</button>
-        <button class="tab" data-route="metrics" type="button">指标管理</button>
-        <button class="tab" data-route="findings" type="button">Findings</button>
-        <button class="tab" data-route="report" type="button">报告预览</button>
+        <button class="tab tab-outcome" data-route="report" type="button">报告下载</button>
+        <button class="tab tab-secondary" data-route="targets" type="button">目标设置</button>
+        <button class="tab tab-secondary" data-route="cloudnative" type="button">云原生检查</button>
+        <button class="tab tab-secondary" data-route="api" type="button">API 工具</button>
+        <button class="tab tab-secondary" data-route="smart" type="button">智算云工具</button>
+        <button class="tab tab-secondary" data-route="metrics" type="button">评估指标</button>
       </nav>
 
       <main>
@@ -41,28 +42,28 @@
               <strong id="overallScore">--</strong>
               <small id="conclusion">--</small>
             </article>
-            <article class="metric-card"><span>检查点</span><strong id="checkpointTotal">--</strong><small>覆盖 M5 检查项</small></article>
-            <article class="metric-card"><span>Findings</span><strong id="findingTotal">--</strong><small id="criticalHigh">--</small></article>
+            <article class="metric-card"><span>检查点</span><strong id="checkpointTotal">--</strong><small>覆盖全部评估指标</small></article>
+            <article class="metric-card"><span>风险问题</span><strong id="findingTotal">--</strong><small id="criticalHigh">--</small></article>
             <article class="metric-card"><span>证据覆盖率</span><strong id="evidenceCoverage">--</strong><small id="scoredWeight">--</small></article>
-          </div>
-          <div class="dashboard-grid two">
-            <section class="panel"><h2>Severity 分布</h2><div id="severityBars" class="bars"></div></section>
-            <section class="panel"><h2>Status 分布</h2><div id="statusBars" class="bars"></div></section>
-          </div>
-          <div class="dashboard-grid three">
-            <section class="panel"><h2>工具态势</h2><div id="toolScoreGrid" class="score-list"></div></section>
-            <section class="panel"><h2>云原生三域</h2><div id="domainRadar" class="domain-list"></div></section>
-            <section class="panel"><h2>Top 风险 Namespace</h2><div id="namespaceRisks" class="risk-list"></div></section>
-          </div>
-          <div class="dashboard-grid two">
-            <section class="panel"><h2>工具列表</h2><div id="toolList" class="tool-list"></div></section>
-            <section class="panel"><h2>数据质量</h2><div id="qualityGrid" class="quality-grid"></div></section>
           </div>
           <section class="panel remediation-panel">
             <h2>整改优先级</h2>
             <div id="prioritySummary" class="priority-summary"></div>
             <div id="priorityList" class="priority-list"></div>
           </section>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>风险等级分布</h2><div id="severityBars" class="bars"></div></section>
+            <section class="panel"><h2>问题状态分布</h2><div id="statusBars" class="bars"></div></section>
+          </div>
+          <div class="dashboard-grid three">
+            <section class="panel"><h2>工具结果</h2><div id="toolScoreGrid" class="score-list"></div></section>
+            <section class="panel"><h2>云原生安全域</h2><div id="domainRadar" class="domain-list"></div></section>
+            <section class="panel"><h2>风险集中的资源范围</h2><div id="namespaceRisks" class="risk-list"></div></section>
+          </div>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>工具列表</h2><div id="toolList" class="tool-list"></div></section>
+            <section class="panel"><h2>数据质量</h2><div id="qualityGrid" class="quality-grid"></div></section>
+          </div>
           <section class="panel progress-panel">
             <div class="section-head"><h2>评估进度</h2><button id="cancelTaskBtn" type="button">取消任务</button></div>
             <div id="progressTimeline" class="timeline"></div>
@@ -71,15 +72,15 @@
         <section id="integration" class="view">
           <div class="feature-hero">
             <div>
-              <span class="eyebrow">3.1 · TOOL INTEGRATION DATA PROCESSING</span>
+              <span class="eyebrow">3.1 · 工具集成数据处理</span>
               <h2>工具集成数据处理</h2>
-              <p>统一采集、归一化、质量评估与结果汇总，真实接入云原生评估链路，API 与智算云保留标准化适配插槽。</p>
+              <p>统一收集各类工具结果，检查数据是否完整，再生成风险问题和报告。已有云原生检查结果，API 与智算云工具可后续接入。</p>
             </div>
-            <div class="hero-badge"><strong id="integrationAdapterCount">--</strong><span>已注册适配器</span></div>
+            <div class="hero-badge"><strong id="integrationAdapterCount">--</strong><span>工具接入数</span></div>
           </div>
           <div id="integrationStats" class="summary-grid compact-grid"></div>
           <section class="panel pipeline-panel">
-            <div class="section-head"><div><span class="eyebrow">DATA FLOW</span><h2>统一数据流</h2></div><span id="integrationSchema" class="muted">integration/v1</span></div>
+            <div class="section-head"><div><span class="eyebrow">数据流转</span><h2>统一数据流</h2></div><span id="integrationSchema" class="muted">统一结果格式</span></div>
             <div id="integrationFlow" class="pipeline-flow"></div>
           </section>
           <div class="integration-toolbar">
@@ -94,28 +95,61 @@
             <aside id="integrationDetail" class="integration-detail panel"></aside>
           </div>
           <section class="panel adapter-strip">
-            <div class="section-head"><div><span class="eyebrow">ADAPTER REGISTRY</span><h2>工具适配器状态</h2></div><span class="muted">真实模块与占位模块明确区分</span></div>
+            <div class="section-head"><div><span class="eyebrow">工具接入</span><h2>工具适配器状态</h2></div><span class="muted">区分已接入与待接入工具</span></div>
             <div id="integrationAdapters" class="adapter-grid"></div>
           </section>
+        </section>
+
+        <section id="observability" class="view">
+          <div class="feature-hero observability-hero">
+            <div>
+              <span class="eyebrow">服务关系与风险定位</span>
+              <h2>看清服务如何互相影响</h2>
+              <p>用更直观的方式查看服务、资源和权限风险。链路数据接入后，可继续查看一次请求经过了哪些服务、哪里耗时、哪里出错。</p>
+            </div>
+            <div class="hero-badge"><strong id="observabilityAssetCount">--</strong><span>关联资源</span></div>
+          </div>
+          <div id="observabilityStats" class="summary-grid compact-grid"></div>
+          <div class="observability-grid">
+            <section class="panel topology-panel">
+              <div class="section-head"><div><span class="eyebrow">资源关系</span><h2>服务与资源分布</h2></div><span class="muted">依据当前评估结果</span></div>
+              <div class="topology-legend"><span><i class="legend-dot safe"></i>正常</span><span><i class="legend-dot risk"></i>存在风险</span><span><i class="legend-dot unknown"></i>信息不足</span></div>
+              <div id="serviceTopology" class="service-topology"></div>
+            </section>
+            <section class="panel trace-panel">
+              <div class="section-head"><div><span class="eyebrow">调用链路</span><h2>一次请求的经过</h2></div><span class="status-note">待接入链路数据</span></div>
+              <div id="traceWaterfall" class="trace-waterfall"></div>
+            </section>
+          </div>
+          <div class="observability-grid">
+            <section class="panel asset-overview-panel">
+              <div class="section-head"><div><span class="eyebrow">资源清单</span><h2>重点资源</h2></div><button class="ghost-button" data-route-jump="findings" type="button">查看全部问题</button></div>
+              <div id="assetOverview" class="asset-overview"></div>
+            </section>
+            <section class="panel policy-overview-panel">
+              <div class="section-head"><div><span class="eyebrow">访问权限</span><h2>权限风险摘要</h2></div><button class="ghost-button" data-route-jump="cloudnative" type="button">查看权限详情</button></div>
+              <div id="policyOverview" class="policy-overview"></div>
+            </section>
+          </div>
         </section>
 
         <section id="visualization" class="view">
           <div class="feature-hero visualization-hero">
             <div>
-              <span class="eyebrow">3.2 · INTEGRATED VISUALIZATION</span>
+              <span class="eyebrow">3.2 · 集成可视化展示</span>
               <h2>集成可视化展示</h2>
-              <p>围绕指标管理、结果判定、综合态势、工具详情和交互下钻构建统一工作台。</p>
+              <p>把总分、风险问题、工具结果和整改依据放在一个可点击的工作台中，方便快速了解当前安全情况。</p>
             </div>
             <div class="hero-badge"><strong id="visualizationScore">--</strong><span>证据覆盖率</span></div>
           </div>
           <div id="visualizationStats" class="summary-grid compact-grid"></div>
           <div class="visualization-grid">
             <section class="panel viz-preview-panel">
-              <div class="section-head"><div><span class="eyebrow">WORKBENCH PREVIEW</span><h2>综合态势快照</h2></div><button class="ghost-button" data-route-jump="overview" type="button">打开总览</button></div>
+              <div class="section-head"><div><span class="eyebrow">态势预览</span><h2>综合态势快照</h2></div><button class="ghost-button" data-route-jump="overview" type="button">打开总览</button></div>
               <div id="vizPreview" class="viz-preview"></div>
             </section>
             <section class="panel viz-capability-panel">
-              <div class="section-head"><div><span class="eyebrow">ACCEPTANCE MAP</span><h2>标书能力地图</h2></div><span class="muted">点击能力进入证据详情</span></div>
+              <div class="section-head"><div><span class="eyebrow">能力清单</span><h2>标书能力地图</h2></div><span class="muted">点击能力进入证据详情</span></div>
               <div id="visualizationCatalog" class="visualization-catalog"></div>
             </section>
           </div>
@@ -128,17 +162,17 @@
               <h2>目标导入</h2>
               <div class="form-grid">
                 <input id="targetName" type="text" placeholder="目标名称" value="PVE K8s 靶场" />
-                <select id="targetMode">
-                  <option value="pve_ssh">PVE SSH</option>
+                <select id="targetMode" aria-label="连接方式">
+                  <option value="pve_ssh">PVE 主机连接</option>
                   <option value="manifest">Manifest 目录</option>
-                  <option value="kubeconfig">Kubeconfig</option>
+                  <option value="kubeconfig">Kubeconfig 文件</option>
                 </select>
-                <input id="targetManifest" type="text" placeholder="manifest 路径" value="ops/cnsec-lab/manifests" />
-                <input id="targetPveSsh" type="text" placeholder="PVE SSH alias" value="cloudnative-env" />
-                <input id="targetControlPlane" type="text" placeholder="control-plane IP" value="10.20.0.11" />
-                <input id="targetSshKey" type="text" placeholder="SSH key" value="/root/.ssh/agent_lab" />
-                <input id="targetSshUser" type="text" placeholder="SSH user" value="agent" />
-                <input id="targetLabels" type="text" placeholder='labels JSON，例如 {"env":"demo"}' value='{"env":"demo"}' />
+                <input id="targetManifest" type="text" placeholder="配置目录路径" value="ops/cnsec-lab/manifests" />
+                <input id="targetPveSsh" type="text" placeholder="PVE 主机别名" value="cloudnative-env" />
+                <input id="targetControlPlane" type="text" placeholder="控制面 IP 地址" value="10.20.0.11" />
+                <input id="targetSshKey" type="text" placeholder="SSH 密钥路径" value="/root/.ssh/agent_lab" />
+                <input id="targetSshUser" type="text" placeholder="SSH 登录用户" value="agent" />
+                <input id="targetLabels" type="text" placeholder='目标标签 JSON，例如 {"env":"demo"}' value='{"env":"demo"}' />
                 <button id="createTargetBtn" type="button">保存目标</button>
               </div>
             </section>
@@ -146,10 +180,10 @@
               <h2>创建评估任务</h2>
               <div class="form-grid">
                 <select id="targetSelect"></select>
-                <input id="newTaskId" type="text" placeholder="task id" value="dashboard-target-demo" />
+                <input id="newTaskId" type="text" placeholder="评估任务名称" value="dashboard-target-demo" />
                 <select id="newTaskProfile">
-                  <option value="all_tools_demo">all_tools_demo</option>
-                  <option value="cloud_native_full">cloud_native_full</option>
+                  <option value="all_tools_demo">全工具演示</option>
+                  <option value="cloud_native_full">云原生全量检查</option>
                 </select>
                 <button id="createAssessmentBtn" type="button">创建并运行</button>
               </div>
@@ -157,29 +191,29 @@
           </div>
           <section class="panel targets-panel">
             <h2>目标列表</h2>
-            <div class="table-wrap"><table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>连接模式</th><th>连接</th><th>标签</th><th>操作</th></tr></thead><tbody id="targetRows"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>编号</th><th>名称</th><th>类型</th><th>连接方式</th><th>连接状态</th><th>标签</th><th>操作</th></tr></thead><tbody id="targetRows"></tbody></table></div>
           </section>
         </section>
 
         <section id="cloudnative" class="view">
-          <div class="section-head"><h2>云原生检查点</h2><input id="checkpointSearch" type="search" placeholder="搜索检查点/域/编号" /></div>
-          <div class="table-wrap"><table><thead><tr><th>编号</th><th>检查点</th><th>域</th><th>权重</th><th>状态</th><th>得分</th><th>Findings</th></tr></thead><tbody id="checkpointRows"></tbody></table></div>
+          <div class="section-head"><h2>云原生安全检查</h2><input id="checkpointSearch" type="search" placeholder="搜索检查项、领域或编号" /></div>
+          <div class="table-wrap"><table><thead><tr><th>编号</th><th>检查项</th><th>所属领域</th><th>权重</th><th>状态</th><th>得分</th><th>问题数</th></tr></thead><tbody id="checkpointRows"></tbody></table></div>
           <section class="panel rbac-panel">
-            <div class="section-head"><h2>RBAC 权限矩阵</h2><span id="rbacSummary" class="muted">等待加载</span></div>
+            <div class="section-head"><h2>权限关系</h2><span id="rbacSummary" class="muted">等待加载</span></div>
             <div class="filters rbac-filters">
-              <input id="rbacSubjectFilter" type="search" placeholder="主体 subject" />
-              <input id="rbacResourceFilter" type="search" placeholder="资源 resource" />
-              <input id="rbacVerbFilter" type="search" placeholder="动作 verb" />
-              <input id="rbacScopeFilter" type="search" placeholder="范围 scope" />
-              <label class="check-row"><input id="rbacDangerousOnly" type="checkbox" checked /> 仅高危</label>
+              <input id="rbacSubjectFilter" type="search" placeholder="主体名称" />
+              <input id="rbacResourceFilter" type="search" placeholder="资源名称" />
+              <input id="rbacVerbFilter" type="search" placeholder="可执行操作" />
+              <input id="rbacScopeFilter" type="search" placeholder="作用范围" />
+              <label class="check-row"><input id="rbacDangerousOnly" type="checkbox" checked /> 仅显示高风险</label>
             </div>
-            <div class="table-wrap"><table><thead><tr><th>主体</th><th>范围</th><th>角色</th><th>资源</th><th>动作</th><th>风险原因</th></tr></thead><tbody id="rbacRows"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>主体</th><th>范围</th><th>角色</th><th>资源</th><th>操作</th><th>需要关注的原因</th></tr></thead><tbody id="rbacRows"></tbody></table></div>
           </section>
         </section>
 
         <section id="api" class="view">
           <section class="panel stub-panel">
-            <h2>API 安全 Stub</h2>
+            <h2>API 工具结果（待接入）</h2>
             <div id="apiStubStats" class="stub-grid"></div>
             <div id="apiStubDetails" class="stub-details"></div>
           </section>
@@ -187,7 +221,7 @@
 
         <section id="smart" class="view">
           <section class="panel stub-panel">
-            <h2>智算云 Stub</h2>
+            <h2>智算云工具结果（待接入）</h2>
             <div id="smartStubStats" class="stub-grid"></div>
             <div id="smartStubDetails" class="stub-details"></div>
           </section>
@@ -219,25 +253,25 @@
 
         <section id="findings" class="view">
           <section class="filters">
-            <select id="toolFilter"><option value="">全部工具</option></select>
-            <select id="checkpointFilter"><option value="">全部检查点</option></select>
-            <select id="domainFilter"><option value="">全部域</option></select>
-            <select id="severityFilter"><option value="">全部严重性</option></select>
-            <select id="statusFilter"><option value="">全部状态</option></select>
-            <input id="namespaceFilter" type="search" placeholder="namespace" />
-            <input id="kindFilter" type="search" placeholder="kind" />
-            <input id="nameFilter" type="search" placeholder="name" />
-            <input id="keywordFilter" type="search" placeholder="关键词" />
+            <select id="toolFilter"><option value="">全部来源工具</option></select>
+            <select id="checkpointFilter"><option value="">全部检查项</option></select>
+            <select id="domainFilter"><option value="">全部安全域</option></select>
+            <select id="severityFilter"><option value="">全部风险等级</option></select>
+            <select id="statusFilter"><option value="">全部问题状态</option></select>
+            <input id="namespaceFilter" type="search" placeholder="资源范围" />
+            <input id="kindFilter" type="search" placeholder="资源类型" />
+            <input id="nameFilter" type="search" placeholder="资源名称" />
+            <input id="keywordFilter" type="search" placeholder="搜索问题" />
           </section>
           <div class="findings-layout">
-            <div class="table-wrap"><table><thead><tr><th>Severity</th><th>Status</th><th>Checkpoint</th><th>Tool</th><th>对象</th><th>标题</th></tr></thead><tbody id="findingRows"></tbody></table></div>
-            <aside id="findingDetail" class="detail-panel"><h2>Finding 详情</h2><p class="muted">点击左侧行查看 evidence 与 remediation。</p></aside>
+            <div class="table-wrap"><table><thead><tr><th>风险等级</th><th>当前状态</th><th>检查项</th><th>来源工具</th><th>影响对象</th><th>问题描述</th></tr></thead><tbody id="findingRows"></tbody></table></div>
+            <aside id="findingDetail" class="detail-panel"><h2>问题详情</h2><p class="muted">点击左侧问题查看发现依据与建议处理。</p></aside>
           </div>
         </section>
 
         <section id="report" class="view">
           <section class="panel">
-            <div class="section-head"><h2>报告预览</h2><div class="actions"><a id="jsonLink" href="#" target="_blank" rel="noreferrer">JSON</a><a id="markdownLink" href="#" target="_blank" rel="noreferrer">Markdown</a><a id="htmlLink" href="#" target="_blank" rel="noreferrer">HTML</a></div></div>
+            <div class="section-head"><h2>报告下载</h2><div class="actions"><a id="jsonLink" href="#" target="_blank" rel="noreferrer">下载 JSON</a><a id="markdownLink" href="#" target="_blank" rel="noreferrer">下载 Markdown</a><a id="htmlLink" href="#" target="_blank" rel="noreferrer">打开 HTML</a></div></div>
             <pre id="reportPreview" class="report-preview">等待加载报告</pre>
           </section>
         </section>
