@@ -404,7 +404,7 @@ class AssessmentStore:
         checkpoint_items = self._enabled_checkpoint_items()
         filtered_findings, filter_summary = self._filter_findings_for_checkpoints(findings, checkpoint_items)
         report = build_report(task_id, filtered_findings, self.scoring_checkpoints())
-        for key in ["data_quality", "tool_count", "tools", "tool_summary"]:
+        for key in ["data_quality", "tool_count", "tools", "tool_summary", "integration_pipeline"]:
             if base_summary and key in base_summary:
                 report.summary[key] = base_summary[key]
         report.summary["dynamic_filter"] = filter_summary

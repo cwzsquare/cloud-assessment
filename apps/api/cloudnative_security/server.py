@@ -82,6 +82,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/checkpoints":
             self._json(self.store.list_checkpoints())
             return
+        if parsed.path == "/api/integration":
+            task_id = query.get("task_id", [None])[0]
+            report = self.store.get_report(task_id) if task_id else None
+            pipeline = report.get("summary", {}).get("integration_pipeline") if report else None
+            self._json(pipeline if pipeline else {"error": "not found"}, 200 if pipeline else 404)
+            return
         if parsed.path == "/api/targets":
             self._json(self.store.list_targets())
             return

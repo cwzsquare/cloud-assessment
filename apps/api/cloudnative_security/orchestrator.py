@@ -9,6 +9,7 @@ from typing import Any
 
 from .adapters import AdapterRegistry, AdapterResult, AssessmentRequest, default_registry
 from .checkpoints import ASSESSMENT_CHECKPOINTS, CLOUD_NATIVE_CHECKPOINTS
+from .integration import build_integration_pipeline
 from .models import AssetRef, AssessmentReport, Evidence, Finding
 from .rules import _finding
 from .scoring import build_report
@@ -272,4 +273,7 @@ class AssessmentOrchestrator:
         report.summary["tool_count"] = len(adapter_results)
         report.summary["tool_summary"] = tool_summary(adapter_results, normalized, adapter_health)
         report.summary["tools"] = report.summary["tool_summary"]
+        report.summary["integration_pipeline"] = build_integration_pipeline(
+            request, adapter_results, normalized, quality, adapter_health
+        )
         return OrchestratorResult(request, adapter_results, normalized, report, quality, adapter_health)

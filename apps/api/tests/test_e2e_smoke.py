@@ -75,6 +75,12 @@ class EndToEndSmokeTest(unittest.TestCase):
         report = payload["report"]
         self.assertEqual(38, report["summary"]["checkpoint_total"])
         self.assertGreaterEqual(report["summary"]["finding_total"], 40)
+        integration = self.get_json("/api/integration?task_id=e2e-fixture-task")
+        self.assertEqual("integration/v1", integration["schema_version"])
+        self.assertEqual(23, len(integration["points"]))
+        self.assertEqual("real", next(item for item in integration["points"] if item["id"] == "INT-9")["mode"])
+        self.assertEqual("placeholder", next(item for item in integration["points"] if item["id"] == "INT-8")["mode"])
+        self.assertEqual("real", next(item for item in integration["points"] if item["id"] == "VIZ-18")["mode"])
 
         findings = self.get_json("/api/findings?task_id=e2e-fixture-task")
         failed = [item for item in findings if item["status"] == "FAIL"]

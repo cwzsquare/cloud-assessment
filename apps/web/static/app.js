@@ -7,9 +7,13 @@
     findings: [],
     checkpoints: [],
     rawSnapshots: [],
+    integration: null,
     rbacMatrix: null,
     taskEvents: [],
     selectedFinding: null,
+    integrationGroup: "data_processing",
+    integrationPoint: "",
+    visualizationPoint: "",
     filters: { tool_id: "", checkpoint_id: "", domain: "", severity: "", status: "", namespace: "", kind: "", name: "", keyword: "" },
     rbacFilters: { subject: "", resource: "", verb: "", scope: "", dangerous_only: true },
   };
@@ -63,6 +67,7 @@
       api("/api/raw-snapshots" + query).catch(function () { return []; }),
       api("/api/assessments/" + encodeURIComponent(taskId) + "/rbac-matrix").catch(function () { return null; }),
       api("/api/assessments/" + encodeURIComponent(taskId) + "/events").catch(function () { return []; }),
+      api("/api/integration" + query).catch(function () { return null; }),
     ]).then(function (parts) {
       state.checkpoints = parts[0] || [];
       state.findings = parts[1] || [];
@@ -70,6 +75,7 @@
       state.rawSnapshots = parts[3] || [];
       state.rbacMatrix = parts[4];
       state.taskEvents = parts[5] || [];
+      state.integration = parts[6] || (state.report && state.report.summary && state.report.summary.integration_pipeline) || null;
       if (state.report && state.report.findings && !state.findings.length) state.findings = state.report.findings;
       renderAll();
     });
@@ -125,6 +131,8 @@
     renderStubs();
     renderMetrics();
     renderReport();
+    renderIntegration();
+    renderVisualization();
   }
 
   function renderHeader() {
@@ -286,6 +294,87 @@
     $("progressTimeline").innerHTML = events.length ? events.map(function (event) {
       return '<div class="timeline-row ' + escapeHtml(text(event.status).toLowerCase()) + '"><span>' + escapeHtml(text(event.progress, "0")) + '%</span><strong>' + escapeHtml(text(event.stage)) + '</strong><p>' + escapeHtml(text(event.message)) + '</p><small>' + escapeHtml(text(event.created_at, "")) + '</small></div>';
     }).join("") : '<p class="muted">暂无任务进度事件</p>';
+  }
+  function integrationData() {
+    return state.integration || (state.report && state.report.summary && state.report.summary.integration_pipeline) || { stats: {}, flow: [], points: [], adapters: [] };
+  }
+
+  function statusLabel(status) {
+    return status === "PASS" ? "已实现" : status === "WARN" ? "需关注" : status === "FAIL" ? "异常" : "待接入";
+  }
+
+  function modeLabel(mode) {
+    return mode === "real" ? "真实模块" : mode === "placeholder" ? "占位插槽" : "已实现";
+  }
+
+  function statCard(label, value, note, tone) {
+    return '<div class="integration-stat ' + escapeHtml(tone || "") + '"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(text(value)) + '</strong><small>' + escapeHtml(note || "") + '</small></div>';
+  }
+
+  function renderIntegration() {
+    var pipeline = integrationData();
+    var stats = pipeline.stats || {};
+    $("integrationAdapterCount").textContent = text(stats.adapter_count, "0");
+    $("integrationSchema").textContent = text(pipeline.schema_version, "integration/v1");
+    $("integrationStats").innerHTML = [
+      statCard("Raw snapshots", stats.raw_snapshot_count, "原始工具输出快照", "blue"),
+      statCard("Normalized findings", stats.normalized_finding_count, "统一 Finding 结果", "green"),
+      statCard("质量评分", stats.quality_score === undefined ? "--" : stats.quality_score + "%", "完整性 / 新鲜度 / Unknown", "purple"),
+      statCard("真实接入", (pipeline.adapters || []).filter(function (item) { return item.mode === "real"; }).length, "云原生评估链路", "orange"),
+    ].join("");
+    $("integrationFlow").innerHTML = (pipeline.flow || []).map(function (item, index) {
+      return '<div class="pipeline-step"><div class="pipeline-index">0' + (index + 1) + '</div><strong>' + escapeHtml(text(item.label)) + '</strong><span>' + escapeHtml(text(item.detail)) + '</span></div>' + (index < pipeline.flow.length - 1 ? '<div class="pipeline-arrow">→</div>' : "");
+    }).join("") || '<p class="muted">暂无管线数据，请先运行评估任务。</p>';
+    document.querySelectorAll(".integration-group").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.integrationGroup === state.integrationGroup);
+    });
+    var points = (pipeline.points || []).filter(function (point) { return point.group === state.integrationGroup; });
+    if (!points.some(function (point) { return point.id === state.integrationPoint; })) state.integrationPoint = points[0] ? points[0].id : "";
+    var groupLabel = state.integrationGroup === "visualization" ? "3.2 集成可视化展示" : "3.1 工具集成数据处理";
+    $("integrationGroupHint").textContent = groupLabel + " · " + points.length + " 个验收小点";
+    $("integrationCatalog").innerHTML = points.map(function (point) {
+      return '<button class="integration-card ' + (point.id === state.integrationPoint ? "selected " : "") + 'mode-' + escapeHtml(point.mode) + '" data-integration-point="' + escapeHtml(point.id) + '" type="button">' +
+        '<span class="card-code">' + escapeHtml(point.code) + '</span><strong>' + escapeHtml(point.name) + '</strong><small>' + escapeHtml(point.stage) + '</small><div><span class="pill ' + escapeHtml(text(point.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(point.status)) + '</span><em>' + escapeHtml(modeLabel(point.mode)) + '</em></div></button>';
+    }).join("") || '<p class="empty">暂无验收小点数据</p>';
+    var selected = points.find(function (point) { return point.id === state.integrationPoint; });
+    renderIntegrationDetail(selected);
+    $("integrationAdapters").innerHTML = (pipeline.adapters || []).map(function (adapter) {
+      return '<div class="adapter-card ' + (adapter.mode === "real" ? "real" : "placeholder") + '"><div><strong>' + escapeHtml(adapter.tool_id) + '</strong><span class="adapter-status">' + escapeHtml(adapter.mode === "real" ? "REAL" : "PLACEHOLDER") + '</span></div><p>' + escapeHtml(text(adapter.schema_version)) + ' · ' + escapeHtml(text(adapter.finding_count, "0")) + ' findings</p><small>' + escapeHtml(text(adapter.raw_kind)) + '</small></div>';
+    }).join("") || '<p class="muted">暂无适配器状态</p>';
+  }
+
+  function renderIntegrationDetail(point) {
+    if (!point) {
+      $("integrationDetail").innerHTML = '<div class="detail-empty"><span class="eyebrow">ACCEPTANCE EVIDENCE</span><h2>选择一个标书小点</h2><p>运行评估任务后，点击左侧能力卡片查看实现状态、数据证据与验收口径。</p></div>';
+      return;
+    }
+    $("integrationDetail").innerHTML = '<div class="detail-kicker"><span class="card-code">' + escapeHtml(point.code) + '</span><span class="pill ' + escapeHtml(text(point.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(point.status)) + '</span></div>' +
+      '<h2>' + escapeHtml(point.name) + '</h2><p class="detail-lead">' + escapeHtml(point.evidence) + '</p>' +
+      '<div class="evidence-grid"><div><span>实现模式</span><strong>' + escapeHtml(modeLabel(point.mode)) + '</strong></div><div><span>实现指标</span><strong>' + escapeHtml(point.metric) + '</strong></div><div><span>Finding 证据</span><strong>' + escapeHtml(text(point.finding_count, "0")) + ' 条</strong></div><div><span>权重</span><strong>' + escapeHtml(text(point.weight)) + '</strong></div></div>' +
+      '<div class="detail-callout"><span>数据处理链路</span><strong>' + escapeHtml(point.rule_group) + '</strong><p>结果进入统一评估报告，并可从 Findings 页面继续下钻原始证据和整改建议。</p></div>';
+  }
+
+  function renderVisualization() {
+    var pipeline = integrationData();
+    var stats = pipeline.stats || {};
+    var summaryData = summary();
+    $("visualizationScore").textContent = summaryData.evidence_coverage === undefined ? "--" : summaryData.evidence_coverage + "%";
+    $("visualizationStats").innerHTML = [
+      statCard("综合安全评分", summaryData.overall_score, text(summaryData.conclusion, "等待报告"), "blue"),
+      statCard("覆盖检查点", summaryData.checkpoint_total, "指标体系覆盖", "green"),
+      statCard("风险发现", summaryData.finding_total, "统一结果集", "orange"),
+      statCard("筛选维度", "9", "工具 / 域 / 严重性 / 对象", "purple"),
+    ].join("");
+    $("vizPreview").innerHTML = '<div class="viz-score"><span>综合安全评分</span><strong>' + escapeHtml(text(summaryData.overall_score)) + '</strong><small>' + escapeHtml(text(summaryData.conclusion, "暂无结论")) + '</small></div>' +
+      '<div class="viz-bars">' + Object.keys(summaryData.severity_count || {}).map(function (key) { return '<div><span>' + escapeHtml(key) + '</span><i style="width:' + Math.min(100, Number(summaryData.severity_count[key]) * 12 + 8) + '%"></i><b>' + escapeHtml(summaryData.severity_count[key]) + '</b></div>'; }).join("") + '</div>' +
+      '<div class="viz-foot"><span>质量评分</span><strong>' + escapeHtml(text(stats.quality_score, "--")) + '%</strong><span>工具覆盖</span><strong>' + escapeHtml(text(stats.adapter_count, "0")) + ' adapters</strong></div>';
+    var points = (pipeline.points || []).filter(function (point) { return point.group === "visualization"; });
+    if (!points.some(function (point) { return point.id === state.visualizationPoint; })) state.visualizationPoint = points[0] ? points[0].id : "";
+    $("visualizationCatalog").innerHTML = points.map(function (point) {
+      return '<button class="viz-capability ' + (point.id === state.visualizationPoint ? "selected " : "") + 'mode-' + escapeHtml(point.mode) + '" data-viz-point="' + escapeHtml(point.id) + '" type="button"><span class="card-code">' + escapeHtml(point.code) + '</span><strong>' + escapeHtml(point.name) + '</strong><small>' + escapeHtml(point.metric) + '</small><span class="pill ' + escapeHtml(text(point.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(point.status)) + '</span></button>';
+    }).join("") || '<p class="empty">暂无可视化能力数据</p>';
+    var selected = points.find(function (point) { return point.id === state.visualizationPoint; });
+    $("visualizationDetail").innerHTML = selected ? '<div class="detail-kicker"><span class="card-code">' + escapeHtml(selected.code) + '</span><span class="pill ' + escapeHtml(text(selected.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(selected.status)) + '</span></div><h2>' + escapeHtml(selected.name) + '</h2><p class="detail-lead">' + escapeHtml(selected.evidence) + '</p><div class="detail-callout"><span>截图佐证定位</span><strong>' + escapeHtml(selected.code + " · " + selected.name) + '</strong><p>该能力已在本工作台形成独立可见状态，可直接用于投标技术应答和现场演示。</p></div>' : '<p class="muted">选择能力查看验收证据。</p>';
   }
 
   function renderTargets() {
@@ -641,6 +730,28 @@
   function wireEvents() {
     document.querySelectorAll(".tab").forEach(function (tab) { tab.addEventListener("click", function () { setRoute(tab.dataset.route); }); });
     window.addEventListener("hashchange", function () { setRoute(location.hash.replace("#", "")); });
+    document.querySelectorAll(".integration-group").forEach(function (button) {
+      button.addEventListener("click", function () {
+        state.integrationGroup = button.dataset.integrationGroup;
+        state.integrationPoint = "";
+        renderIntegration();
+      });
+    });
+    $("integrationCatalog").addEventListener("click", function (event) {
+      var card = event.target.closest("[data-integration-point]");
+      if (!card) return;
+      state.integrationPoint = card.dataset.integrationPoint;
+      renderIntegration();
+    });
+    $("visualizationCatalog").addEventListener("click", function (event) {
+      var card = event.target.closest("[data-viz-point]");
+      if (!card) return;
+      state.visualizationPoint = card.dataset.vizPoint;
+      renderVisualization();
+    });
+    document.querySelectorAll("[data-route-jump]").forEach(function (button) {
+      button.addEventListener("click", function () { setRoute(button.dataset.routeJump); });
+    });
     $("taskSelect").addEventListener("change", function () { loadTask(this.value); });
     $("refreshBtn").addEventListener("click", init);
     $("cancelTaskBtn").addEventListener("click", cancelCurrentTask);

@@ -22,6 +22,8 @@
 
       <nav class="tabs" aria-label="Dashboard views">
         <button class="tab active" data-route="overview" type="button">总览</button>
+        <button class="tab tab-featured" data-route="integration" type="button">工具集成中心</button>
+        <button class="tab tab-featured" data-route="visualization" type="button">集成可视化</button>
         <button class="tab" data-route="targets" type="button">目标/任务</button>
         <button class="tab" data-route="cloudnative" type="button">云原生详情</button>
         <button class="tab" data-route="api" type="button">API Stub</button>
@@ -65,6 +67,59 @@
             <div class="section-head"><h2>评估进度</h2><button id="cancelTaskBtn" type="button">取消任务</button></div>
             <div id="progressTimeline" class="timeline"></div>
           </section>
+        </section>
+        <section id="integration" class="view">
+          <div class="feature-hero">
+            <div>
+              <span class="eyebrow">3.1 · TOOL INTEGRATION DATA PROCESSING</span>
+              <h2>工具集成数据处理</h2>
+              <p>统一采集、归一化、质量评估与结果汇总，真实接入云原生评估链路，API 与智算云保留标准化适配插槽。</p>
+            </div>
+            <div class="hero-badge"><strong id="integrationAdapterCount">--</strong><span>已注册适配器</span></div>
+          </div>
+          <div id="integrationStats" class="summary-grid compact-grid"></div>
+          <section class="panel pipeline-panel">
+            <div class="section-head"><div><span class="eyebrow">DATA FLOW</span><h2>统一数据流</h2></div><span id="integrationSchema" class="muted">integration/v1</span></div>
+            <div id="integrationFlow" class="pipeline-flow"></div>
+          </section>
+          <div class="integration-toolbar">
+            <div class="segmented" role="tablist" aria-label="集成能力分组">
+              <button class="integration-group active" data-integration-group="data_processing" type="button">数据加工 <span id="dataPointCount">14</span></button>
+              <button class="integration-group" data-integration-group="visualization" type="button">可视化能力 <span id="vizPointCount">9</span></button>
+            </div>
+            <span id="integrationGroupHint" class="muted">3.1 工具集成数据处理 · 14 个验收小点</span>
+          </div>
+          <div class="integration-layout">
+            <div id="integrationCatalog" class="integration-catalog"></div>
+            <aside id="integrationDetail" class="integration-detail panel"></aside>
+          </div>
+          <section class="panel adapter-strip">
+            <div class="section-head"><div><span class="eyebrow">ADAPTER REGISTRY</span><h2>工具适配器状态</h2></div><span class="muted">真实模块与占位模块明确区分</span></div>
+            <div id="integrationAdapters" class="adapter-grid"></div>
+          </section>
+        </section>
+
+        <section id="visualization" class="view">
+          <div class="feature-hero visualization-hero">
+            <div>
+              <span class="eyebrow">3.2 · INTEGRATED VISUALIZATION</span>
+              <h2>集成可视化展示</h2>
+              <p>围绕指标管理、结果判定、综合态势、工具详情和交互下钻构建统一工作台。</p>
+            </div>
+            <div class="hero-badge"><strong id="visualizationScore">--</strong><span>证据覆盖率</span></div>
+          </div>
+          <div id="visualizationStats" class="summary-grid compact-grid"></div>
+          <div class="visualization-grid">
+            <section class="panel viz-preview-panel">
+              <div class="section-head"><div><span class="eyebrow">WORKBENCH PREVIEW</span><h2>综合态势快照</h2></div><button class="ghost-button" data-route-jump="overview" type="button">打开总览</button></div>
+              <div id="vizPreview" class="viz-preview"></div>
+            </section>
+            <section class="panel viz-capability-panel">
+              <div class="section-head"><div><span class="eyebrow">ACCEPTANCE MAP</span><h2>标书能力地图</h2></div><span class="muted">点击能力进入证据详情</span></div>
+              <div id="visualizationCatalog" class="visualization-catalog"></div>
+            </section>
+          </div>
+          <section id="visualizationDetail" class="panel visualization-detail"></section>
         </section>
 
         <section id="targets" class="view">
