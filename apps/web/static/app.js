@@ -36,6 +36,9 @@
     route = route || "overview";
     document.querySelectorAll(".tab").forEach(function (tab) { tab.classList.toggle("active", tab.dataset.route === route); });
     document.querySelectorAll(".view").forEach(function (view) { view.classList.toggle("active", view.id === route); });
+    var secondaryRoutes = ["targets", "cloudnative", "api", "smart", "metrics"];
+    var secondary = document.querySelector(".nav-secondary");
+    if (secondary) secondary.open = secondaryRoutes.indexOf(route) >= 0;
     if (location.hash !== "#" + route) location.hash = route;
   }
 
