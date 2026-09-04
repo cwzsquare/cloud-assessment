@@ -46,6 +46,16 @@
     "CN-39": { module: "容器持久化安全评估", name: "数据持久化异常监控模块", title: "数据持久化异常应被及时发现", analysis: "检查数据目录、存储卷和运行时事件，识别异常读写、越权挂载或可能导致数据泄露的行为。" },
   };
 
+  var cloudNativeModules = [
+    "不可变基础设施与弹性安全评估",
+    "动态访问控制与身份安全评估",
+    "容器持久化安全评估",
+  ];
+
+  function isCloudNativeModule(value) {
+    return cloudNativeModules.indexOf(value) >= 0;
+  }
+
   function checkpointInfo(checkpointId) {
     var presentation = cloudNativePresentation[checkpointId];
     if (presentation) return presentation;
@@ -246,7 +256,7 @@
 
   function renderDomainRadar(domains) {
     var cloudDomains = (domains || []).filter(function (row) {
-      return /不可变|动态访问|持久化/.test(row.domain || "");
+      return isCloudNativeModule(row.domain || "");
     });
     if (!cloudDomains.length) {
       var byDomain = {};
@@ -262,12 +272,12 @@
       cloudDomains = Object.keys(byDomain).map(function (domain) {
         var row = byDomain[domain];
         return { domain: domain, score: row.total ? Math.round(row.sum / row.total * 100) / 100 : 0, unknown_checkpoint_count: row.unknown };
-      }).filter(function (row) { return /不可变|动态访问|持久化/.test(row.domain || ""); });
+      }).filter(function (row) { return isCloudNativeModule(row.domain || ""); });
     }
     $("domainRadar").innerHTML = cloudDomains.length ? cloudDomains.map(function (row) {
       var score = Number(row.score) || 0;
       return '<div class="domain-row"><span>' + escapeHtml(text(row.domain)) + '</span><div><i style="width:' + Math.max(3, Math.min(100, score)) + '%"></i></div><b>' + escapeHtml(text(row.score)) + '</b><small>UNKNOWN ' + escapeHtml(text(row.unknown_checkpoint_count, "0")) + '</small></div>';
-    }).join("") : '<p class="muted">暂无云原生域数据</p>';
+    }).join("") : '<p class="muted">暂无云原生模块数据</p>';
   }
 
   function renderNamespaceRisks() {
@@ -554,7 +564,7 @@
   function renderFilters() {
     fillSelect("toolFilter", state.findings.filter(function (f) { return f.tool_id !== "platform"; }).map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
     fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项", checkpointLabel);
-    fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部安全域");
+    fillSelect("domainFilter", checkpointScores().filter(function (s) { return isCloudNativeModule(s.domain); }).map(function (s) { return s.domain; }), "全部安全模块");
     fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
     fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态");
   }
