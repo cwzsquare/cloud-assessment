@@ -32,6 +32,56 @@
     return { label: [asset.kind, asset.namespace || "_cluster", asset.name].filter(Boolean).join("/"), namespace: asset.namespace || "", kind: asset.kind || "", name: asset.name || "" };
   };
 
+  var cloudNativePresentation = {
+    "CN-6": { module: "不可变基础设施与弹性安全评估", name: "微服务弹性能力评估", title: "服务在压力或故障时仍能稳定运行", analysis: "检查服务在流量突增、实例故障或自动扩缩容时，是否具备减少故障扩散和拒绝服务影响的保护能力。" },
+    "CN-22": { module: "不可变基础设施与弹性安全评估", name: "验证不可变部署原则", title: "应用发布后不应被在线修改", analysis: "检查发布后的应用是否可能被远程登录、运行中改写文件或使用过大的容器操作权限绕过发布流程。" },
+    "CN-23": { module: "不可变基础设施与弹性安全评估", name: "容器不可变安全管控", title: "容器应保持受控且不可随意变更", analysis: "检查容器是否以较低权限运行、限制在线写入和提权，并能发现应用配置或运行状态的异常变化。" },
+    "CN-24": { module: "不可变基础设施与弹性安全评估", name: "弹性扩缩容安全", title: "扩缩容时安全策略应保持一致", analysis: "检查应用新增实例或版本变更时，安全准入和运行约束是否仍然生效，避免新实例绕过既有安全要求。" },
+    "CN-25": { module: "不可变基础设施与弹性安全评估", name: "弹性资源安全策略管控", title: "新增资源应自动获得安全限制", analysis: "检查资源数量、计算使用和节点上的工作负载是否有明确边界，避免资源争抢、失控扩张或新节点未纳入安全管理。" },
+    "CN-26": { module: "不可变基础设施与弹性安全评估", name: "弹性扩缩容行为安全防护", title: "扩缩容操作应经过授权并可追溯", analysis: "检查谁可以调整实例数量、是否存在异常扩容行为，以及相关操作是否有事件或审计记录可供追查。" },
+    "CN-27": { module: "不可变基础设施与弹性安全评估", name: "弹性资源生命周期安全治理", title: "临时资源应按规则回收", analysis: "检查临时任务、实例、存储和访问入口是否在使用结束后及时回收，避免遗留资源继续暴露或占用数据。" },
+    "CN-28": { module: "动态访问控制与身份安全评估", name: "身份认证机制评估模块", title: "访问云原生资源前应完成身份认证", analysis: "检查访问者和服务身份是否经过可靠认证，是否存在匿名访问、未保护的服务间通信或默认身份配置风险。" },
+    "CN-29": { module: "动态访问控制与身份安全评估", name: "动态访问控制评估模块", title: "不同账号只能访问被授权的资源", analysis: "检查账号、服务和角色之间的访问边界，确认高风险权限不会被无关主体继承，并且临时授权能够按时失效。" },
+    "CN-30": { module: "动态访问控制与身份安全评估", name: "身份安全强化模块", title: "登录与运行身份需要持续保护", analysis: "检查远程登录入口、容器身份和身份相关事件，及时识别暴力尝试、异常操作和缺少审计记录的情况。" },
+    "CN-35": { module: "容器持久化安全评估", name: "etcd 访问控制与加密检测", title: "控制面敏感数据应受访问控制和加密保护", analysis: "检查集群控制面保存的配置和敏感信息是否限制访问，并在传输和存储过程中得到加密保护。" },
+    "CN-36": { module: "容器持久化安全评估", name: "持久卷PV安全评估", title: "持久卷应具备加密、备份和恢复保障", analysis: "检查持久化存储的加密、共享范围、回收策略以及快照和备份能力，降低数据误删、泄露或无法恢复的风险。" },
+    "CN-37": { module: "容器持久化安全评估", name: "有状态应用数据安全", title: "有状态应用数据应避免泄露和误操作", analysis: "检查数据库等有状态应用的数据访问隔离、敏感配置保护、传输加密和备份覆盖情况。" },
+    "CN-38": { module: "容器持久化安全评估", name: "镜像仓库数据安全", title: "镜像仓库数据应受保护并可审计", analysis: "检查镜像存储和传输保护、镜像来源与敏感信息泄露情况，并确认重要账户操作能够被审计。" },
+    "CN-39": { module: "容器持久化安全评估", name: "数据持久化异常监控模块", title: "数据持久化异常应被及时发现", analysis: "检查数据目录、存储卷和运行时事件，识别异常读写、越权挂载或可能导致数据泄露的行为。" },
+  };
+
+  function checkpointInfo(checkpointId) {
+    var presentation = cloudNativePresentation[checkpointId];
+    if (presentation) return presentation;
+    var checkpoint = state.checkpoints.find(function (item) { return item.id === checkpointId; });
+    var fallbackName = /^CN-/.test(checkpointId || "") ? "云原生安全检查项" : (checkpoint && checkpoint.name) || checkpointId || "未标记检查项";
+    return checkpoint ? { module: checkpoint.domain || "", name: fallbackName, title: fallbackName, analysis: "该检查项用于补充评估结果。" } : { module: "", name: fallbackName, title: /^CN-/.test(checkpointId || "") ? "云原生安全问题" : fallbackName, analysis: "该问题暂未关联到已登记的检查项。" };
+  }
+
+  function checkpointLabel(checkpointId) {
+    var info = checkpointInfo(checkpointId);
+    return info.module ? info.module + " · " + info.name : info.name;
+  }
+
+  function userAssetLabel(asset) {
+    return asset.name ? (asset.namespace ? asset.namespace + " / " : "") + asset.name : "整个评估范围";
+  }
+
+  function checkpointRiskTitle(checkpointId, assetName) {
+    var info = cloudNativePresentation[checkpointId];
+    return info ? info.title + (assetName ? "（" + assetName + "）" : "") : "";
+  }
+
+  function findingTitle(finding) {
+    var asset = assetOf(finding);
+    return checkpointRiskTitle(finding.checkpoint_id, asset.name) || text(finding.title);
+  }
+
+  function findingAnalysis(finding) {
+    var info = checkpointInfo(finding.checkpoint_id);
+    return info.analysis + " 当前评估对象为“" + userAssetLabel(assetOf(finding)) + "”，结果为“" + statusLabel(finding.status) + "”。";
+  }
+
   function setRoute(route) {
     route = route || "overview";
     document.querySelectorAll(".tab").forEach(function (tab) { tab.classList.toggle("active", tab.dataset.route === route); });
@@ -264,7 +314,8 @@
       return '<div><span>' + escapeHtml(priorityLabel(priority)) + '</span><strong>' + escapeHtml(text(counts[priority], "0")) + '</strong></div>';
     }).join("");
     $("priorityList").innerHTML = visibleRows.length ? visibleRows.map(function (row) {
-      return '<div class="priority-row ' + escapeHtml(text(row.priority, "P3").toLowerCase()) + '"><strong>' + escapeHtml(priorityLabel(row.priority, "P3")) + '</strong><span><code>' + escapeHtml(text(row.checkpoint_id)) + '</code> ' + escapeHtml(text(row.title)) + '</span><small>' + escapeHtml(text(row.asset)) + '</small><p>' + escapeHtml(text(row.remediation)) + '</p></div>';
+      var title = checkpointRiskTitle(row.checkpoint_id) || text(row.title);
+      return '<div class="priority-row ' + escapeHtml(text(row.priority, "P3").toLowerCase()) + '"><strong>' + escapeHtml(priorityLabel(row.priority, "P3")) + '</strong><span>' + escapeHtml(title) + '</span><small>' + escapeHtml(text(row.asset)) + '</small><p>' + escapeHtml(text(row.remediation)) + '</p></div>';
     }).join("") + (rows.length > visibleRows.length ? '<p class="muted">已优先显示最紧急的 6 项，完整问题请打开“风险问题”。</p>' : "") : '<p class="muted">暂无整改优先级</p>';
   }
 
@@ -535,11 +586,13 @@
     var byScore = {};
     checkpointScores().forEach(function (s) { byScore[s.checkpoint_id || s.id] = s; });
     $("checkpointRows").innerHTML = state.checkpoints.filter(function (cp) {
-      return !term || [cp.id, cp.name, cp.domain, cp.rule_group].join(" ").toLowerCase().indexOf(term) >= 0;
+      var info = checkpointInfo(cp.id);
+      return /^CN-/.test(cp.id) && (!term || [cp.id, info.module, info.name, cp.rule_group].join(" ").toLowerCase().indexOf(term) >= 0);
     }).map(function (cp) {
+      var info = checkpointInfo(cp.id);
       var sc = byScore[cp.id] || {};
-      return '<tr><td><code>' + escapeHtml(cp.id) + '</code></td><td>' + escapeHtml(text(cp.name)) + '</td><td>' + escapeHtml(text(cp.domain)) + '</td><td>' + escapeHtml(text(cp.weight)) + '</td><td><span class="pill ' + escapeHtml(text(sc.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(text(sc.status, "UNKNOWN")) + '</span></td><td>' + escapeHtml(text(sc.score)) + '</td><td>' + escapeHtml(text(sc.finding_count, "0")) + '</td></tr>';
-    }).join("") || '<tr><td colspan="7" class="empty">暂无检查点</td></tr>';
+      return '<tr><td>' + escapeHtml(info.module) + '</td><td>' + escapeHtml(info.name) + '</td><td>' + escapeHtml(text(cp.weight)) + '</td><td><span class="pill ' + escapeHtml(text(sc.status, "UNKNOWN").toLowerCase()) + '">' + escapeHtml(statusLabel(sc.status)) + '</span></td><td>' + escapeHtml(text(sc.score)) + '</td><td>' + escapeHtml(text(sc.finding_count, "0")) + '</td></tr>';
+    }).join("") || '<tr><td colspan="6" class="empty">暂无云原生检查项</td></tr>';
   }
 
   function renderRbacMatrix() {
@@ -568,12 +621,13 @@
       cloud_api_stub: "云上 API 安全工具（待接入）",
       smart_cloud_stub: "智算云安全工具（待接入）",
       registry_stub: "镜像仓库安全工具（待接入）",
+      platform: "系统评估",
     })[toolId] || toolId || "未知来源工具";
   }
 
   function renderFilters() {
     fillSelect("toolFilter", state.findings.filter(function (f) { return f.tool_id !== "platform"; }).map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
-    fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项");
+    fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项", checkpointLabel);
     fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部安全域");
     fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
     fillSelect("statusFilter", state.findings.map(function (f) { return f.status; }), "全部问题状态");
@@ -609,7 +663,7 @@
     var rows = filteredFindings();
     $("findingRows").innerHTML = rows.map(function (f, index) {
       var asset = assetOf(f);
-      return '<tr data-index="' + index + '"><td><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span></td><td><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span></td><td><code>' + escapeHtml(text(f.checkpoint_id)) + '</code></td><td>' + escapeHtml(text(f.tool_id)) + '</td><td>' + escapeHtml(asset.label) + '</td><td>' + escapeHtml(text(f.title)) + '</td></tr>';
+      return '<tr data-index="' + index + '"><td><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span></td><td><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span></td><td>' + escapeHtml(checkpointLabel(f.checkpoint_id)) + '</td><td>' + escapeHtml(toolLabel(f.tool_id)) + '</td><td>' + escapeHtml(userAssetLabel(asset)) + '</td><td>' + escapeHtml(findingTitle(f)) + '</td></tr>';
     }).join("") || '<tr><td colspan="6" class="empty">没有匹配的问题</td></tr>';
     document.querySelectorAll("#findingRows tr[data-index]").forEach(function (row) {
       row.addEventListener("click", function () { state.selectedFinding = rows[Number(row.dataset.index)]; renderFindingDetail(); });
@@ -623,14 +677,17 @@
     if (!f) { $("findingDetail").innerHTML = '<h2>问题详情</h2><p class="muted">暂无数据</p>'; return; }
     var evidence = safeJson(f.evidence_json, f.evidence || []);
     var asset = assetOf(f);
+    var info = checkpointInfo(f.checkpoint_id);
     var related = relatedFindings(f).slice(0, 8);
-    $("findingDetail").innerHTML = '<div class="detail-head"><h2>' + escapeHtml(text(f.title)) + '</h2><button id="copyRemediationBtn" type="button">复制处理建议</button></div>' +
-      '<div class="detail-tags"><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span><code>' + escapeHtml(text(f.checkpoint_id)) + '</code><code>' + escapeHtml(text(f.rule_id)) + '</code></div>' +
-      '<h3>影响对象</h3><div class="asset-card"><strong>' + escapeHtml(asset.label) + '</strong><span>' + escapeHtml([asset.namespace, asset.kind, asset.name].filter(Boolean).join(" / ") || "整个评估范围") + '</span></div>' +
-      '<h3>发现依据</h3><pre>' + escapeHtml(JSON.stringify(evidence, null, 2)) + '</pre>' +
+    $("findingDetail").innerHTML = '<div class="detail-head"><h2>' + escapeHtml(findingTitle(f)) + '</h2><button id="copyRemediationBtn" type="button">复制处理建议</button></div>' +
+      '<div class="detail-tags"><span class="sev ' + escapeHtml(text(f.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(f.severity)) + '</span><span class="pill ' + escapeHtml(text(f.status).toLowerCase()) + '">' + escapeHtml(statusLabel(f.status)) + '</span><span>' + escapeHtml(info.name) + '</span></div>' +
+      '<h3>所属安全模块</h3><div class="asset-card"><strong>' + escapeHtml(info.module || "通用检查") + '</strong><span>三级模块：' + escapeHtml(info.name) + '</span></div>' +
+      '<h3>风险分析</h3><p>' + escapeHtml(findingAnalysis(f)) + '</p>' +
+      '<h3>影响对象</h3><div class="asset-card"><strong>' + escapeHtml(asset.name || "整个评估范围") + '</strong><span>' + escapeHtml(asset.namespace ? "资源范围：" + asset.namespace : "未限定具体资源范围") + '</span></div>' +
+      '<h3>发现依据</h3><details class="evidence-disclosure"><summary>查看原始技术证据</summary><pre>' + escapeHtml(JSON.stringify(evidence, null, 2)) + '</pre></details>' +
       '<h3>建议处理</h3><p id="remediationText">' + escapeHtml(text(f.remediation, "暂无处理建议")) + '</p>' +
       '<h3>同一对象的其他问题</h3><div class="related-findings">' + (related.length ? related.map(function (item) {
-        return '<button class="related-finding" data-finding-id="' + escapeHtml(text(item.id)) + '" type="button"><span class="pill ' + escapeHtml(text(item.status).toLowerCase()) + '">' + escapeHtml(statusLabel(item.status)) + '</span><code>' + escapeHtml(text(item.checkpoint_id)) + '</code><strong>' + escapeHtml(text(item.title)) + '</strong></button>';
+        return '<button class="related-finding" data-finding-id="' + escapeHtml(text(item.id)) + '" type="button"><span class="pill ' + escapeHtml(text(item.status).toLowerCase()) + '">' + escapeHtml(statusLabel(item.status)) + '</span><strong>' + escapeHtml(findingTitle(item)) + '</strong></button>';
       }).join("") : '<p class="muted">暂无其他问题</p>') + '</div>';
     $("copyRemediationBtn").addEventListener("click", function () { copyRemediation(f.remediation || ""); });
     document.querySelectorAll(".related-finding").forEach(function (button) {
@@ -697,7 +754,7 @@
 
   function renderMetrics() {
     $("metricRows").innerHTML = state.checkpoints.map(function (cp) {
-      return '<tr><td><code>' + escapeHtml(cp.id) + '</code> ' + escapeHtml(text(cp.name)) + '</td><td>' + escapeHtml(text(cp.domain)) + '</td><td><input class="enabled-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="checkbox" ' + (cp.enabled === false ? "" : "checked") + ' /></td><td>' + escapeHtml(text(cp.weight)) + '</td><td><input class="weight-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="number" value="' + escapeHtml(text(cp.weight, 1)) + '" step="0.1" min="0" /></td><td><input class="applicability-input wide-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="text" value="' + escapeHtml(JSON.stringify(cp.applicability || {})) + '" /></td><td><input class="rule-enabled-input wide-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="text" value="' + escapeHtml(JSON.stringify(cp.rule_enabled || {})) + '" /></td><td><button class="save-weight" data-checkpoint="' + escapeHtml(cp.id) + '" type="button">保存并重算</button><button class="save-checkpoint-meta" data-checkpoint="' + escapeHtml(cp.id) + '" type="button">保存元数据</button></td></tr>';
+      return '<tr><td>' + escapeHtml(checkpointLabel(cp.id)) + '</td><td>' + escapeHtml(text(cp.domain)) + '</td><td><input class="enabled-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="checkbox" ' + (cp.enabled === false ? "" : "checked") + ' /></td><td>' + escapeHtml(text(cp.weight)) + '</td><td><input class="weight-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="number" value="' + escapeHtml(text(cp.weight, 1)) + '" step="0.1" min="0" /></td><td><input class="applicability-input wide-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="text" value="' + escapeHtml(JSON.stringify(cp.applicability || {})) + '" /></td><td><input class="rule-enabled-input wide-input" data-checkpoint="' + escapeHtml(cp.id) + '" type="text" value="' + escapeHtml(JSON.stringify(cp.rule_enabled || {})) + '" /></td><td><button class="save-weight" data-checkpoint="' + escapeHtml(cp.id) + '" type="button">保存并重算</button><button class="save-checkpoint-meta" data-checkpoint="' + escapeHtml(cp.id) + '" type="button">保存元数据</button></td></tr>';
     }).join("") || '<tr><td colspan="8" class="empty">暂无指标</td></tr>';
   }
 
