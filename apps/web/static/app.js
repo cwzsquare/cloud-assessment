@@ -568,12 +568,11 @@
       cloud_api_stub: "云上 API 安全工具（待接入）",
       smart_cloud_stub: "智算云安全工具（待接入）",
       registry_stub: "镜像仓库安全工具（待接入）",
-      platform: "平台派生检查",
     })[toolId] || toolId || "未知来源工具";
   }
 
   function renderFilters() {
-    fillSelect("toolFilter", state.findings.map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
+    fillSelect("toolFilter", state.findings.filter(function (f) { return f.tool_id !== "platform"; }).map(function (f) { return f.tool_id; }), "全部来源工具", toolLabel);
     fillSelect("checkpointFilter", state.findings.map(function (f) { return f.checkpoint_id; }), "全部检查项");
     fillSelect("domainFilter", checkpointScores().map(function (s) { return s.domain; }), "全部安全域");
     fillSelect("severityFilter", state.findings.map(function (f) { return f.severity; }), "全部风险等级");
