@@ -196,12 +196,13 @@
     var s = summary();
     $("overallScore").textContent = text(s.overall_score);
     $("conclusion").textContent = text(s.conclusion, "等待报告");
-    $("checkpointTotal").textContent = text(s.checkpoint_total || state.checkpoints.length);
+    $("checkpointTotal").textContent = cloudNativeModules.length;
     $("findingTotal").textContent = text(s.finding_total || state.findings.length);
     $("criticalHigh").textContent = "严重 / 高风险未通过: " + text((s.critical_fail_count || 0) + (s.high_fail_count || 0), "0");
     $("evidenceCoverage").textContent = s.evidence_coverage === undefined ? "--" : s.evidence_coverage + "%";
     $("scoredWeight").textContent = "已计分权重: " + text(s.scored_weight);
-    renderBars("severityBars", s.severity_count || countBy(state.findings, "severity"));
+    renderDonut("severityDonut", s.severity_count || countBy(state.findings, "severity"), severityLabel, "条问题");
+    renderDonut("moduleDonut", cloudNativeRiskCounts(), function (value) { return value; }, "条云原生问题");
     renderBars("statusBars", s.status_count || countBy(state.findings, "status"));
     renderToolScores();
     renderDomainRadar(s.by_domain || []);
@@ -221,8 +222,37 @@
     }).join("") : '<p class="muted">暂无数据</p>';
   }
 
+  function cloudNativeRiskCounts() {
+    var counts = {};
+    state.findings.forEach(function (finding) {
+      var info = cloudNativePresentation[finding.checkpoint_id];
+      if (info && isCloudNativeModule(info.module)) counts[info.module] = (counts[info.module] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function renderDonut(id, data, labeler, totalLabel) {
+    var entries = Object.keys(data || {}).map(function (key) { return [key, Number(data[key]) || 0]; }).filter(function (entry) { return entry[1] > 0; });
+    var total = entries.reduce(function (sum, entry) { return sum + entry[1]; }, 0);
+    if (!entries.length || !total) { $(id).innerHTML = '<p class="muted">暂无数据</p>'; return; }
+    var colors = ["#c33b4b", "#e8893d", "#246bce", "#0d9c8d", "#7565e8"];
+    var cursor = 0;
+    var stops = entries.map(function (entry, index) {
+      var start = cursor;
+      cursor += entry[1] / total * 360;
+      return colors[index % colors.length] + " " + start + "deg " + cursor + "deg";
+    });
+    $(id).innerHTML = '<div class="donut-visual" style="background:conic-gradient(' + stops.join(",") + ')"><div class="donut-hole"><strong>' + total + '</strong><span>' + escapeHtml(totalLabel || "条问题") + '</span></div></div><div class="chart-legend">' + entries.map(function (entry, index) {
+      return '<div><i style="background:' + colors[index % colors.length] + '"></i><span>' + escapeHtml(labeler(entry[0])) + '</span><b>' + entry[1] + ' · ' + Math.round(entry[1] / total * 100) + '%</b></div>';
+    }).join("") + '</div>';
+  }
+
   function renderTools(tools) {
-    if (!tools.length) tools = Array.from(new Set(state.findings.map(function (f) { return f.tool_id; }).filter(Boolean))).map(function (id) { return { tool_id: id }; });
+    if (!tools.length) tools = Array.from(new Set(state.findings.map(function (f) { return f.tool_id; }).filter(function (id) { return id && id !== "platform"; }))).map(function (id) { return { tool_id: id }; });
+    tools = tools.filter(function (tool) {
+      var id = typeof tool === "string" ? tool : tool.tool_id || tool.id || tool.name;
+      return id !== "platform";
+    });
     $("toolList").innerHTML = tools.length ? tools.map(function (tool) {
       if (typeof tool === "string") tool = { tool_id: tool };
       var id = tool.tool_id || tool.id || tool.name;
@@ -230,13 +260,13 @@
       var status = tool.status || (health && health.status) || "ready";
       var stub = tool.stub_mode || status === "stub";
       var label = stub ? "待接入" : status === "ready" ? "已就绪" : status === "error" ? "异常" : status;
-      return '<div class="tool-item"><strong>' + escapeHtml(text(id)) + '</strong><span>' + escapeHtml(text(tool.finding_count, "0")) + ' 个问题</span><small>' + escapeHtml(label) + '</small></div>';
+      return '<div class="tool-item"><strong>' + escapeHtml(toolLabel(id)) + '</strong><span>' + escapeHtml(text(tool.finding_count, "0")) + ' 个问题</span><small>' + escapeHtml(label) + '</small></div>';
     }).join("") : '<p class="muted">暂无工具数据</p>';
   }
 
   function renderToolScores() {
     var tools = {};
-    state.findings.forEach(function (finding) {
+    state.findings.filter(function (finding) { return finding.tool_id !== "platform"; }).forEach(function (finding) {
       var id = finding.tool_id || "unknown";
       tools[id] = tools[id] || { id: id, total: 0, fail: 0, warn: 0, unknown: 0 };
       tools[id].total += 1;
@@ -250,7 +280,7 @@
       return Object.assign(row, { risk: risk });
     }).sort(function (a, b) { return b.risk - a.risk; });
     $("toolScoreGrid").innerHTML = rows.length ? rows.map(function (row) {
-      return '<div class="score-row"><strong>' + escapeHtml(row.id) + '</strong><span>' + row.total + ' 个问题</span><b>失败 ' + row.fail + ' · 警告 ' + row.warn + ' · 信息不足 ' + row.unknown + '</b></div>';
+      return '<div class="score-row"><strong>' + escapeHtml(toolLabel(row.id)) + '</strong><span>' + row.total + ' 个问题</span><b>失败 ' + row.fail + ' · 警告 ' + row.warn + ' · 信息不足 ' + row.unknown + '</b></div>';
     }).join("") : '<p class="muted">暂无工具结果</p>';
   }
 
@@ -274,7 +304,7 @@
         return { domain: domain, score: row.total ? Math.round(row.sum / row.total * 100) / 100 : 0, unknown_checkpoint_count: row.unknown };
       }).filter(function (row) { return isCloudNativeModule(row.domain || ""); });
     }
-    $("domainRadar").innerHTML = cloudDomains.length ? cloudDomains.map(function (row) {
+    $("moduleScoreBars").innerHTML = cloudDomains.length ? cloudDomains.map(function (row) {
       var score = Number(row.score) || 0;
       return '<div class="domain-row"><span>' + escapeHtml(text(row.domain)) + '</span><div><i style="width:' + Math.max(3, Math.min(100, score)) + '%"></i></div><b>' + escapeHtml(text(row.score)) + '</b><small>UNKNOWN ' + escapeHtml(text(row.unknown_checkpoint_count, "0")) + '</small></div>';
     }).join("") : '<p class="muted">暂无云原生模块数据</p>';

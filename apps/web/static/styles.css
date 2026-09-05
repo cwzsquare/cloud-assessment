@@ -93,6 +93,17 @@ button { background: #f8fbff; }
 .bar-row i { display: block; height: 100%; background: var(--accent); }
 .bar-row b { text-align: right; }
 
+.donut-panel { display: grid; grid-template-columns: 164px minmax(0, 1fr); gap: 18px; align-items: center; min-height: 182px; }
+.donut-visual { width: 164px; height: 164px; display: grid; place-items: center; border-radius: 50%; position: relative; }
+.donut-visual::before { content: ""; position: absolute; inset: 22px; border-radius: 50%; background: var(--panel); }
+.donut-hole { position: relative; z-index: 1; display: grid; place-items: center; line-height: 1.2; }
+.donut-hole strong { font-size: 28px; }
+.donut-hole span { color: var(--muted); font-size: 12px; }
+.chart-legend { display: grid; gap: 8px; }
+.chart-legend div { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 7px; align-items: center; }
+.chart-legend i { width: 10px; height: 10px; border-radius: 50%; }
+.chart-legend span { overflow: hidden; line-height: 1.35; color: var(--muted); }
+
 .tool-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .tool-item, .quality-grid div, .stub-grid div {
   border: 1px solid var(--line);
@@ -116,7 +127,7 @@ button { background: #f8fbff; }
   background: #fbfcfd;
 }
 .score-row strong, .risk-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.score-row span, .risk-row span { color: var(--muted); font-size: 12px; }
+.domain-row span { overflow: hidden; line-height: 1.35; }
 .score-row b, .risk-row b { grid-row: span 2; color: var(--accent); font-size: 12px; text-align: right; }
 .domain-row {
   display: grid;
@@ -154,7 +165,7 @@ code { padding: 1px 4px; border-radius: 3px; background: #eef3f6; color: #24465a
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(9, minmax(112px, 1fr));
+  grid-template-columns: repeat(8, minmax(112px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }

@@ -45,7 +45,7 @@
               <strong id="overallScore">--</strong>
               <small id="conclusion">--</small>
             </article>
-            <article class="metric-card"><span>检查点</span><strong id="checkpointTotal">--</strong><small>覆盖全部评估指标</small></article>
+            <article class="metric-card"><span>安全模块</span><strong id="checkpointTotal">--</strong><small>覆盖云原生三个安全模块</small></article>
             <article class="metric-card"><span>风险问题</span><strong id="findingTotal">--</strong><small id="criticalHigh">--</small></article>
             <article class="metric-card"><span>证据覆盖率</span><strong id="evidenceCoverage">--</strong><small id="scoredWeight">--</small></article>
           </div>
@@ -55,12 +55,15 @@
             <div id="priorityList" class="priority-list"></div>
           </section>
           <div class="dashboard-grid two">
-            <section class="panel"><h2>风险等级分布</h2><div id="severityBars" class="bars"></div></section>
-            <section class="panel"><h2>问题状态分布</h2><div id="statusBars" class="bars"></div></section>
+            <section class="panel"><h2>风险等级分布</h2><div id="severityDonut" class="donut-panel"></div></section>
+            <section class="panel"><h2>云原生安全模块风险占比</h2><div id="moduleDonut" class="donut-panel"></div></section>
           </div>
-          <div class="dashboard-grid three">
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>问题状态分布</h2><div id="statusBars" class="bars"></div></section>
+            <section class="panel"><h2>安全模块得分</h2><div id="moduleScoreBars" class="domain-list"></div></section>
+          </div>
+          <div class="dashboard-grid two">
             <section class="panel"><h2>工具结果</h2><div id="toolScoreGrid" class="score-list"></div></section>
-            <section class="panel"><h2>云原生安全模块</h2><div id="domainRadar" class="domain-list"></div></section>
             <section class="panel"><h2>风险集中的资源范围</h2><div id="namespaceRisks" class="risk-list"></div></section>
           </div>
           <div class="dashboard-grid two">
