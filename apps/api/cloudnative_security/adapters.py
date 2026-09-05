@@ -178,25 +178,39 @@ class CloudApiSecurityAdapterStub:
         auth_mode = request.options.get("api_auth_mode", "access_key")
         account_asset = AssetRef(kind="CloudAccount", name=account)
         endpoint_asset = AssetRef(kind="CloudApiEndpoint", name=endpoint, labels={"region": region, "auth_mode": auth_mode})
+        source_input = request.options.get("cloud_api_input") or {
+            "schema_version": "cloud-api-tool/v1",
+            "target": {"account_id": account, "region": region, "endpoint": endpoint},
+            "authentication": {"mode": auth_mode, "mfa_enabled": True, "key_age_days": 41},
+            "api_assets": [
+                {"api_id": "api-cluster-admin", "method": "GET", "path": "/v1/projects/demo/clusters", "tls": True, "authorization": "iam-role"},
+                {"api_id": "api-public-admin", "method": "POST", "path": "/v1/admin/scale", "tls": True, "authorization": "public"},
+            ],
+            "audit_events": [{"action": "scale", "actor": "demo-operator", "result": "success", "source_ip": "10.10.8.21"}],
+        }
         findings = [
-            _finding(request.task_id, "INT-8", "INT-API-001-stub-adapter", "云上 API 安全评估工具 stub 接入", "PASS", "info", account_asset, Evidence("Cloud API stub 已按统一 Finding 输出", account_asset, observed=self.tool_id, expected="normalized finding"), "替换为真实云厂商 API adapter 后保留统一输出。", self.tool_id),
-            _finding(request.task_id, "INT-8", "INT-API-001-key-rotation", "云上 API 参数标准化与凭据姿态占位", "PASS", "info", account_asset, Evidence("stub 已接收并标准化云账号、区域和认证模式参数", account_asset, observed={"auth_mode": auth_mode, "rotation_days": "stub-placeholder", "mfa_check": "stub-placeholder"}, expected="standardized cloud API adapter parameters"), "真实云 API adapter 接入后用同一 Finding 合约替换轮换、MFA 和访问密钥证据。", self.tool_id),
-            _finding(request.task_id, "INT-8", "INT-API-001-public-admin", "云上管理 API 暴露面 mock 风险样例", "WARN", "medium", endpoint_asset, Evidence("mock endpoint 用于验证 API 工具详情页和统一态势汇总，不代表真实云暴露结论", endpoint_asset, observed={"endpoint": endpoint, "source_restriction": "stub-placeholder", "mock_risk": "public-admin-sample"}, expected="mock finding visible in API detail view"), "真实 adapter 应校验管理 API 暴露范围、来源白名单、mTLS 或专线接入。", self.tool_id),
-            _finding(request.task_id, "INT-8", "INT-API-001-audit-log", "云上 API 审计日志占位证据", "PASS", "info", account_asset, Evidence("stub 已声明 cloud audit log 能力和统一字段占位，后续真实 adapter 可直接替换", account_asset, observed={"audit_log_source": "stub-placeholder", "fields": ["actor", "source_ip", "action", "result", "time"]}, expected="cloud audit log adapter slot"), "接入真实云厂商审计日志后补充 API 调用来源、失败认证和高危操作证据。", self.tool_id),
+            _finding(request.task_id, "INT-8", "INT-API-001-stub-adapter", "云上 API 评估结果已接入", "PASS", "info", account_asset, Evidence("示例 API 工具输出已转换为统一评估结果", account_asset, observed={"input_schema": source_input["schema_version"], "finding_format": "Finding"}, expected="normalized API assessment result"), "后续替换为真实云上 API 工具输入，保持当前统一输出字段。", self.tool_id),
+            _finding(request.task_id, "INT-8", "INT-API-001-key-rotation", "云账号凭据保护", "PASS", "info", account_asset, Evidence("示例数据包含认证方式、多因素认证和密钥年龄字段", account_asset, observed=source_input["authentication"], expected={"mfa_enabled": True, "key_age_days": "<=90"}), "真实数据接入后补充密钥轮换、MFA 和 IAM 角色证据。", self.tool_id),
+            _finding(request.task_id, "INT-8", "INT-API-001-public-admin", "管理 API 不应对公网开放", "WARN", "medium", endpoint_asset, Evidence("示例 API 清单发现一个授权方式为 public 的管理接口", endpoint_asset, observed={"api_id": "api-public-admin", "authorization": "public", "tls": True}, expected={"authorization": "iam-role or mTLS", "public_access": False}), "限制管理 API 的访问来源，启用细粒度授权，并保留调用审计记录。", self.tool_id),
+            _finding(request.task_id, "INT-8", "INT-API-001-audit-log", "高风险 API 操作应可追溯", "PASS", "info", account_asset, Evidence("示例输入包含 API 操作人、来源地址、动作和结果", account_asset, observed={"event_count": len(source_input["audit_events"]), "fields": ["actor", "source_ip", "action", "result"]}, expected="audit fields complete"), "真实数据接入后补充失败认证、越权调用和高风险管理操作日志。", self.tool_id),
         ]
         raw_summary = {
             "kind": "cloud_api_stub_summary",
             "schema_version": "stub/v1",
             "collected_at": _utc_now_iso(),
             "stub_mode": True,
+            "input_mode": "fixture",
+            "input_schema": "cloud-api-tool/v1",
+            "input": source_input,
             "target_parameters": {
                 "cloud_account": account,
                 "cloud_region": region,
                 "api_endpoint": endpoint,
                 "api_auth_mode": auth_mode,
             },
-            "capabilities": ["credential_posture", "api_exposure", "audit_log_presence", "mfa_and_rotation"],
-            "integration_contract": {"input": "AssessmentRequest.options", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
+            "capabilities": ["api_asset_inventory", "credential_posture", "api_exposure", "audit_log_presence", "mfa_and_rotation"],
+            "integration_contract": {"input": "AssessmentRequest.options.cloud_api_input", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
+            "replacement_note": "当前为按标书 API 工具适配要求构造的示例输入；真实部门数据接入后替换 input，不改变 Finding[] 输出契约。",
             "mock_assets": [account_asset.kind, endpoint_asset.kind],
             "mock_findings": len(findings),
         }
@@ -215,24 +229,36 @@ class SmartCloudSecurityAdapterStub:
         model_endpoint = request.options.get("model_endpoint", "mock-llm-endpoint")
         workspace_asset = AssetRef(kind="SmartCloudWorkspace", name=workspace, labels={"gpu_pool": gpu_pool})
         model_asset = AssetRef(kind="ModelEndpoint", name=model_endpoint, labels={"workspace": workspace})
+        source_input = request.options.get("smart_cloud_input") or {
+            "schema_version": "smart-cloud-tool/v1",
+            "target": {"workspace": workspace, "gpu_pool": gpu_pool},
+            "compute_nodes": [{"node_id": "gpu-node-01", "accelerator": "NVIDIA-A100", "tenant": "demo-team", "isolation": True}],
+            "workloads": [{"workload_id": "training-job-demo", "framework": "PyTorch", "image": "registry.example.invalid/ml/train@sha256:demo", "dataset": "customer-risk-demo"}],
+            "model_endpoints": [{"name": model_endpoint, "tls": True, "authentication": "iam-role", "audit_enabled": True}],
+            "dataset_audit": [{"dataset": "customer-risk-demo", "actor": "demo-trainer", "operation": "read", "result": "success"}],
+        }
         findings = [
-            _finding(request.task_id, "INT-10", "INT-SMART-001-stub-adapter", "智算云安全评估工具 stub 接入", "PASS", "info", workspace_asset, Evidence("SmartCloud stub 已按统一 Finding 输出", workspace_asset, observed=self.tool_id, expected="normalized finding"), "替换为真实智算云 adapter 后保留统一输出。", self.tool_id),
-            _finding(request.task_id, "INT-10", "INT-SMART-001-image-provenance", "智算云镜像来源占位证据", "PASS", "info", workspace_asset, Evidence("stub 已声明 GPU workload 镜像来源检查能力和统一字段占位", workspace_asset, observed={"image_provenance": "stub-placeholder", "signature_check": "stub-placeholder"}, expected="trusted registry/signature adapter slot"), "接入真实智算云后检查镜像签名、模型数据路径和 GPU 节点隔离。", self.tool_id),
-            _finding(request.task_id, "INT-10", "INT-SMART-001-model-auth", "模型服务鉴权 mock 风险样例", "WARN", "medium", model_asset, Evidence("mock 模型服务风险用于验证智算云详情页和统一态势汇总，不代表真实模型服务结论", model_asset, observed={"endpoint": model_endpoint, "authn": "stub-placeholder", "mock_risk": "model-auth-sample"}, expected="mock finding visible in SmartCloud detail view"), "真实 adapter 应检查模型服务入口鉴权、调用配额、来源限制和审计日志。", self.tool_id),
-            _finding(request.task_id, "INT-10", "INT-SMART-001-dataset-audit", "训练数据集访问审计占位证据", "PASS", "info", workspace_asset, Evidence("stub 已声明数据集访问审计能力和统一字段占位", workspace_asset, observed={"dataset_audit_source": "stub-placeholder", "fields": ["dataset", "actor", "operation", "result", "time"]}, expected="dataset access audit adapter slot"), "接入真实智算云后补充数据集访问日志、跨租户共享和敏感数据路径证据。", self.tool_id),
+            _finding(request.task_id, "INT-10", "INT-SMART-001-stub-adapter", "智算云评估结果已接入", "PASS", "info", workspace_asset, Evidence("示例智算云工具输出已转换为统一评估结果", workspace_asset, observed={"input_schema": source_input["schema_version"], "finding_format": "Finding"}, expected="normalized smart-cloud assessment result"), "后续替换为真实智算云工具输入，保持当前统一输出字段。", self.tool_id),
+            _finding(request.task_id, "INT-10", "INT-SMART-001-image-provenance", "AI 工作负载镜像来源应可追溯", "PASS", "info", workspace_asset, Evidence("示例工作负载包含镜像摘要、AI 框架和计算节点隔离字段", workspace_asset, observed=source_input["workloads"][0], expected={"image": "digest-pinned", "isolation": True}), "真实数据接入后补充镜像签名、模型数据路径和 GPU 节点隔离证据。", self.tool_id),
+            _finding(request.task_id, "INT-10", "INT-SMART-001-model-auth", "模型服务访问应经过身份认证", "WARN", "medium", model_asset, Evidence("示例模型服务用于验证鉴权和传输保护结果的统一展示", model_asset, observed=source_input["model_endpoints"][0], expected={"authentication": "iam-role or mTLS", "tls": True, "audit_enabled": True}), "真实数据接入后检查模型服务入口鉴权、调用配额、来源限制和审计日志。", self.tool_id),
+            _finding(request.task_id, "INT-10", "INT-SMART-001-dataset-audit", "训练数据访问应保留审计记录", "PASS", "info", workspace_asset, Evidence("示例输入包含训练数据集访问主体、操作和结果", workspace_asset, observed={"event_count": len(source_input["dataset_audit"]), "fields": ["dataset", "actor", "operation", "result"]}, expected="dataset access audit"), "真实数据接入后补充跨租户共享、敏感数据路径和完整访问日志证据。", self.tool_id),
         ]
         raw_summary = {
             "kind": "smart_cloud_stub_summary",
             "schema_version": "stub/v1",
             "collected_at": _utc_now_iso(),
             "stub_mode": True,
+            "input_mode": "fixture",
+            "input_schema": "smart-cloud-tool/v1",
+            "input": source_input,
             "target_parameters": {
                 "smart_workspace": workspace,
                 "gpu_pool": gpu_pool,
                 "model_endpoint": model_endpoint,
             },
-            "capabilities": ["gpu_workload_posture", "model_endpoint_exposure", "dataset_audit", "image_provenance"],
-            "integration_contract": {"input": "AssessmentRequest.options", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
+            "capabilities": ["distributed_assessment", "gpu_workload_posture", "model_endpoint_exposure", "dataset_audit", "image_provenance"],
+            "integration_contract": {"input": "AssessmentRequest.options.smart_cloud_input", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
+            "replacement_note": "当前为按标书智算云工具适配要求构造的示例输入；真实部门数据接入后替换 input，不改变 Finding[] 输出契约。",
             "mock_assets": [workspace_asset.kind, model_asset.kind],
             "mock_findings": len(findings),
         }
@@ -248,41 +274,82 @@ class RegistrySecurityAdapterStub:
     def evaluate(self, request: AssessmentRequest) -> AdapterResult:
         registry = request.options.get("registry_endpoint", "https://registry.example.invalid")
         registry_asset = AssetRef(kind="RegistryEndpoint", name=registry)
+        image_asset = AssetRef(kind="ContainerImage", name="team-a/payment-api:1.4.2", labels={"registry": registry})
+        source_input = request.options.get("registry_input") or {
+            "schema_version": "registry-tool/v1",
+            "registry": {"endpoint": registry, "tls": True, "anonymous_pull": False, "robot_account": "scanner-bot"},
+            "images": [{"repository": "team-a/payment-api", "tag": "1.4.2", "digest": "sha256:demo-payment-api", "pull_secret": True}],
+            "scan_results": [{"repository": "team-a/payment-api", "critical": 0, "high": 1, "medium": 4, "scanner": "trivy"}],
+            "secret_scans": [{"repository": "team-a/payment-api", "secrets_found": 0}],
+            "audit_events": [{"action": "pull", "repository": "team-a/payment-api", "actor": "scanner-bot", "result": "success"}],
+        }
         findings = [
             _finding(
                 request.task_id,
                 "INT-7",
                 "INT-FRAME-001-registry-adapter-stub",
-                "Harbor/Registry 工具 adapter stub 接入",
+                "镜像仓库评估结果已接入",
                 "PASS",
                 "info",
                 registry_asset,
-                Evidence(
-                    "Registry adapter stub 已按 ToolAdapter 合约接入；CN-38 规则可消费 RegistryEndpoint/RegistryAuditEvent/scan evidence",
-                    registry_asset,
-                    observed={
-                        "tool_id": self.tool_id,
-                        "capabilities": ["registry_endpoint_posture", "registry_audit_events", "vulnerability_scan", "secret_scan"],
-                    },
-                    expected="registered Harbor/Registry adapter slot",
-                ),
-                "替换为真实 Harbor/Registry API adapter 后保留统一 ToolAdapter 和 Finding 合约。",
+                Evidence("示例镜像仓库输出已转换为统一评估结果", registry_asset, observed={"input_schema": source_input["schema_version"], "finding_format": "Finding"}, expected="normalized registry assessment result"),
+                "后续替换为真实 Harbor/Registry 工具输入，保持当前统一输出字段。",
                 self.tool_id,
-            )
+            ),
+            _finding(
+                request.task_id,
+                "CN-38",
+                "CN-REG-001-registry-posture",
+                "镜像仓库应启用安全访问控制",
+                "PASS",
+                "info",
+                registry_asset,
+                Evidence("示例仓库配置包含 TLS、关闭匿名拉取和机器人账号字段", registry_asset, observed=source_input["registry"], expected={"tls": True, "anonymous_pull": False, "robot_account": "configured"}),
+                "真实数据接入后补充仓库端 TLS、匿名访问、机器人账号权限和审计配置证据。",
+                self.tool_id,
+            ),
+            _finding(
+                request.task_id,
+                "CN-38",
+                "CN-REG-001-vulnerability-scan",
+                "业务镜像不应携带高风险漏洞",
+                "WARN",
+                "high",
+                image_asset,
+                Evidence("示例扫描结果发现业务镜像存在 1 个高危漏洞", image_asset, observed=source_input["scan_results"][0], expected={"critical": 0, "high": 0}),
+                "修复或升级受影响组件，重新构建镜像并在发布前完成漏洞复核。",
+                self.tool_id,
+            ),
+            _finding(
+                request.task_id,
+                "CN-38",
+                "CN-REG-001-secret-scan",
+                "镜像中不应包含敏感凭据",
+                "PASS",
+                "info",
+                image_asset,
+                Evidence("示例密钥扫描结果未发现泄露凭据", image_asset, observed=source_input["secret_scans"][0], expected={"secrets_found": 0}),
+                "真实数据接入后持续执行镜像密钥扫描，并阻断包含凭据的镜像发布。",
+                self.tool_id,
+            ),
         ]
         raw_summary = {
             "kind": "registry_stub_summary",
             "schema_version": "stub/v1",
             "collected_at": _utc_now_iso(),
             "stub_mode": True,
+            "input_mode": "fixture",
+            "input_schema": "registry-tool/v1",
+            "input": source_input,
             "target_parameters": {"registry_endpoint": registry},
-            "capabilities": ["registry_endpoint_posture", "registry_audit_events", "vulnerability_scan", "secret_scan"],
+            "capabilities": ["registry_inventory", "registry_endpoint_posture", "registry_audit_events", "vulnerability_scan", "secret_scan"],
             "integration_contract": {
-                "input": "AssessmentRequest.options + RegistryEndpoint/RegistryAuditEvent evidence",
+                "input": "AssessmentRequest.options.registry_input",
                 "output": "Finding[] + raw registry evidence",
                 "detail_view_tool_id": self.tool_id,
             },
-            "mock_assets": [registry_asset.kind],
+            "replacement_note": "当前为按标书镜像仓库数据安全要求构造的示例输入；真实部门数据接入后替换 input，不改变 Finding[] 输出契约。",
+            "mock_assets": [registry_asset.kind, image_asset.kind],
             "mock_findings": len(findings),
         }
         return AdapterResult(self.tool_id, findings, raw_summary)

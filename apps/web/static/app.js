@@ -90,11 +90,11 @@
 
   function setRoute(route) {
     route = route || "overview";
-    var validRoutes = ["overview", "findings", "observability", "report", "targets", "cloudnative", "api", "smart", "metrics"];
+    var validRoutes = ["overview", "findings", "observability", "report", "targets", "cloudnative", "api", "smart", "registry", "metrics"];
     if (validRoutes.indexOf(route) < 0) route = "overview";
     document.querySelectorAll(".tab").forEach(function (tab) { tab.classList.toggle("active", tab.dataset.route === route); });
     document.querySelectorAll(".view").forEach(function (view) { view.classList.toggle("active", view.id === route); });
-    var secondaryRoutes = ["targets", "cloudnative", "api", "smart", "metrics"];
+    var secondaryRoutes = ["targets", "cloudnative", "api", "smart", "registry", "metrics"];
     var secondary = document.querySelector(".nav-secondary");
     if (secondary) secondary.open = secondaryRoutes.indexOf(route) >= 0;
     if (location.hash !== "#" + route) location.hash = route;
@@ -259,7 +259,7 @@
       var health = state.report && state.report.adapter_health && state.report.adapter_health[id];
       var status = tool.status || (health && health.status) || "ready";
       var stub = tool.stub_mode || status === "stub";
-      var label = stub ? "待接入" : status === "ready" ? "已就绪" : status === "error" ? "异常" : status;
+      var label = stub ? "示例数据（待补充）" : status === "ready" ? "已就绪" : status === "error" ? "异常" : status;
       return '<div class="tool-item"><strong>' + escapeHtml(toolLabel(id)) + '</strong><span>' + escapeHtml(text(tool.finding_count, "0")) + ' 个问题</span><small>' + escapeHtml(label) + '</small></div>';
     }).join("") : '<p class="muted">暂无工具数据</p>';
   }
@@ -683,8 +683,9 @@
   }
 
   function renderStubs() {
-    renderStubSection("cloud_api_stub", "apiStubStats", "apiStubDetails", "API 工具问题");
-    renderStubSection("smart_cloud_stub", "smartStubStats", "smartStubDetails", "智算云工具问题");
+    renderStubSection("cloud_api_stub", "apiStubStats", "apiStubDetails", "API 工具示例问题");
+    renderStubSection("smart_cloud_stub", "smartStubStats", "smartStubDetails", "智算云工具示例问题");
+    renderStubSection("registry_stub", "registryStubStats", "registryStubDetails", "镜像仓库工具示例问题");
   }
 
   function renderStubSection(toolId, statsId, detailsId, label) {
@@ -699,21 +700,25 @@
     var fail = findings.filter(function (f) { return f.status === "FAIL"; }).length;
     var warn = findings.filter(function (f) { return f.status === "WARN"; }).length;
     var unknown = findings.filter(function (f) { return f.status === "UNKNOWN"; }).length;
+    var dataState = snapshot.summary && snapshot.summary.input_mode === "fixture" ? "示例数据（待补充）" : "已接入数据";
     return '<div><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(findings.length) + '</strong></div>' +
       '<div><span>失败 / 警告 / 信息不足</span><strong>' + fail + ' / ' + warn + ' / ' + unknown + '</strong></div>' +
+      '<div><span>数据状态</span><strong>' + escapeHtml(dataState) + '</strong></div>' +
       '<div><span>数据版本</span><strong>' + escapeHtml(text(snapshot.schema_version, "stub/v1")) + '</strong></div>';
   }
 
   function stubDetails(toolId, findings, raw) {
     var params = raw.target_parameters || {};
+    var input = raw.input || {};
     var capabilities = raw.capabilities || [];
+    var title = toolId === "cloud_api_stub" ? "云上 API 安全工具" : toolId === "smart_cloud_stub" ? "智算云安全工具" : "镜像仓库安全工具";
     var rows = findings.map(function (finding) {
-      return '<tr><td><span class="pill ' + escapeHtml(text(finding.status).toLowerCase()) + '">' + escapeHtml(statusLabel(finding.status)) + '</span></td><td><span class="sev ' + escapeHtml(text(finding.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(finding.severity)) + '</span></td><td><code>' + escapeHtml(text(finding.rule_id)) + '</code></td><td>' + escapeHtml(text(finding.title)) + '</td></tr>';
-    }).join("") || '<tr><td colspan="4" class="empty">暂无可用问题结果，工具可能尚未接入。</td></tr>';
+      return '<tr><td><span class="pill ' + escapeHtml(text(finding.status).toLowerCase()) + '">' + escapeHtml(statusLabel(finding.status)) + '</span></td><td><span class="sev ' + escapeHtml(text(finding.severity).toLowerCase()) + '">' + escapeHtml(severityLabel(finding.severity)) + '</span></td><td>' + escapeHtml(text(finding.title)) + '</td><td>' + escapeHtml(userAssetLabel(assetOf(finding))) + '</td></tr>';
+    }).join("") || '<tr><td colspan="4" class="empty">暂无示例结果，等待部门补充真实数据。</td></tr>';
     return '<div class="stub-meta">' +
-      '<div><h3>调用参数</h3><pre>' + escapeHtml(JSON.stringify(params, null, 2)) + '</pre></div>' +
-      '<div><h3>检查能力</h3><div class="tag-list">' + (capabilities.length ? capabilities.map(function (item) { return '<span>' + escapeHtml(item) + '</span>'; }).join("") : '<span>待接入</span>') + '</div></div>' +
-      '</div><h3>' + escapeHtml(toolId === "cloud_api_stub" ? "API 工具" : "智算云工具") + '</h3><div class="table-wrap"><table><thead><tr><th>状态</th><th>风险等级</th><th>规则编号</th><th>问题描述</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<div><h3>评估目标</h3><pre>' + escapeHtml(JSON.stringify(params, null, 2)) + '</pre></div>' +
+      '<div><h3>处理能力</h3><div class="tag-list">' + (capabilities.length ? capabilities.map(function (item) { return '<span>' + escapeHtml(item) + '</span>'; }).join("") : '<span>待补充</span>') + '</div></div>' +
+      '</div><details class="evidence-disclosure"><summary>查看示例输入数据</summary><pre>' + escapeHtml(JSON.stringify(input, null, 2)) + '</pre></details><p class="muted">' + escapeHtml(text(raw.replacement_note, "当前展示为示例数据，后续可替换为部门提供的真实工具数据。")) + '</p><h3>' + escapeHtml(title) + '</h3><div class="table-wrap"><table><thead><tr><th>状态</th><th>风险等级</th><th>问题描述</th><th>影响对象</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function renderMetrics() {

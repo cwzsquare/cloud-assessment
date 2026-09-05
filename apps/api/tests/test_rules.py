@@ -3159,3 +3159,26 @@ spec:
             self.assertFalse(checkpoint["enabled"])
             self.assertEqual("demo-only", checkpoint["applicability"]["scope"])
             self.assertFalse(checkpoint["rule_enabled"]["CN-IAM-002"])
+
+    def test_demo_tool_inputs_follow_tender_contract(self) -> None:
+        result = AssessmentOrchestrator().run(
+            AssessmentRequest(
+                task_id="tender-demo-fixtures",
+                profile="all_tools_demo",
+                manifest="ops/cnsec-lab/manifests",
+            )
+        )
+        raw_by_tool = {item.tool_id: item.raw_summary for item in result.adapter_results}
+        self.assertEqual("cloud-api-tool/v1", raw_by_tool["cloud_api_stub"]["input"]["schema_version"])
+        self.assertIn("api_assets", raw_by_tool["cloud_api_stub"]["input"])
+        self.assertIn("audit_events", raw_by_tool["cloud_api_stub"]["input"])
+        self.assertEqual("smart-cloud-tool/v1", raw_by_tool["smart_cloud_stub"]["input"]["schema_version"])
+        self.assertIn("compute_nodes", raw_by_tool["smart_cloud_stub"]["input"])
+        self.assertIn("model_endpoints", raw_by_tool["smart_cloud_stub"]["input"])
+        self.assertEqual("registry-tool/v1", raw_by_tool["registry_stub"]["input"]["schema_version"])
+        self.assertIn("scan_results", raw_by_tool["registry_stub"]["input"])
+        self.assertIn("secret_scans", raw_by_tool["registry_stub"]["input"])
+        self.assertGreaterEqual(sum(1 for finding in result.findings if finding.tool_id == "registry_stub" and finding.checkpoint_id == "CN-38"), 3)
+        for tool_id in ("cloud_api_stub", "smart_cloud_stub", "registry_stub"):
+            self.assertEqual("fixture", raw_by_tool[tool_id]["input_mode"])
+            self.assertIn("replacement_note", raw_by_tool[tool_id])
