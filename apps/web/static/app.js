@@ -118,10 +118,28 @@
     });
   }
 
+  function waitForTask(taskId) {
+    var startedAt = Date.now();
+    function poll() {
+      return api("/api/assessments/" + encodeURIComponent(taskId)).then(function (task) {
+        if (task.status === "success") return task;
+        if (task.status === "failed") throw new Error(task.error || "评估任务执行失败");
+        if (task.status === "canceled") throw new Error("评估任务已取消");
+        return api("/api/assessments/" + encodeURIComponent(taskId) + "/progress").then(function (progress) {
+          var latest = progress.latest || {};
+          $("taskMeta").textContent = "任务执行中 · " + text(latest.message, "正在处理") + " · " + text(latest.progress, "0") + "%";
+          if (Date.now() - startedAt > 30 * 60 * 1000) throw new Error("评估任务等待超时");
+          return new Promise(function (resolve) { setTimeout(resolve, 300); }).then(poll);
+        });
+      });
+    }
+    return poll();
+  }
+
   function loadTask(taskId) {
     state.taskId = taskId;
     var query = "?task_id=" + encodeURIComponent(taskId);
-    return api("/api/dashboard-data" + query).then(function (data) {
+    return waitForTask(taskId).then(function () { return api("/api/dashboard-data" + query); }).then(function (data) {
       state.checkpoints = data.checkpoints || [];
       state.findings = data.findings || [];
       state.report = data.report || null;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -206,6 +207,24 @@ class ApiHandler(BaseHTTPRequestHandler):
             keyword=query.get("keyword", [None])[0],
         )
 
+    @classmethod
+    def _execute_assessment(cls, request: AssessmentRequest) -> None:
+        try:
+            cls.store.replace_task_events(
+                request.task_id,
+                [
+                    {"stage": "queued", "status": "running", "message": "任务已提交，开始评估", "progress": 5, "detail": {"profile": request.profile}},
+                    {"stage": "running", "status": "running", "message": "后台执行评估工具", "progress": 10, "detail": {"profile": request.profile}},
+                ],
+            )
+            cls.store.conn.commit()
+            result = cls.orchestrator.run(request)
+            cls.store.save_result(result)
+        except Exception as exc:
+            cls.store.save_task(request.task_id, request.profile, request.__dict__, "failed")
+            cls.store.append_task_event(request.task_id, "failed", "failed", f"评估任务失败: {exc}", 100)
+            cls.store.conn.commit()
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler naming
         parsed = urlparse(self.path)
         if parsed.path == "/api/checkpoints":
@@ -259,12 +278,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             [{"stage": "queued", "status": "running", "message": "任务已提交，开始评估", "progress": 5, "detail": {"profile": request.profile}}],
         )
         self.store.conn.commit()
-        result = self.orchestrator.run(request)
-        stored_report = self.store.save_result(result)
-        payload = result.to_dict()
-        payload["report"] = stored_report.to_dict()
-        payload["summary"] = payload["report"]["summary"]
-        self._json(payload)
+        threading.Thread(target=type(self)._execute_assessment, args=(request,), daemon=True).start()
+        self._json({"task_id": request.task_id, "status": "running", "request": request.__dict__}, 202)
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib handler naming
         parsed = urlparse(self.path)

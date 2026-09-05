@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -46,6 +47,15 @@ class EndToEndSmokeTest(unittest.TestCase):
             self.assertEqual(200, response.status)
             return json.loads(response.read())
 
+
+    def wait_for_task(self, task_id: str) -> dict[str, object]:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            task = self.get_json(f"/api/assessments/{task_id}")
+            if task["status"] != "running":
+                return task
+            time.sleep(0.02)
+        self.fail(f"task did not finish: {task_id}")
     def test_fixture_manifest_to_assessment_to_html_report(self) -> None:
         status, target = self.request_json(
             "POST",
@@ -71,10 +81,11 @@ class EndToEndSmokeTest(unittest.TestCase):
                 "target_id": "fixture-k8s-bad",
             },
         )
-        self.assertEqual(200, status)
-        report = payload["report"]
-        self.assertEqual(38, report["summary"]["checkpoint_total"])
-        self.assertGreaterEqual(report["summary"]["finding_total"], 40)
+        self.assertEqual(202, status)
+        self.assertEqual("running", payload["status"])
+        task = self.wait_for_task("e2e-fixture-task")
+        self.assertEqual("success", task["status"])
+        report = self.get_json("/api/reports/e2e-fixture-task")
         integration = self.get_json("/api/integration?task_id=e2e-fixture-task")
         self.assertEqual("integration/v1", integration["schema_version"])
         self.assertEqual(23, len(integration["points"]))

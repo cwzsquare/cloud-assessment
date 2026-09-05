@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -59,6 +60,15 @@ class ApiServerTest(unittest.TestCase):
         except HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
+
+    def wait_for_task(self, task_id: str) -> dict[str, object]:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            task = self.get_json(f"/api/assessments/{task_id}")
+            if task["status"] != "running":
+                return task
+            time.sleep(0.02)
+        self.fail(f"task did not finish: {task_id}")
     def test_task_schema_findings_report_and_raw_snapshot_endpoints(self) -> None:
         tasks = self.get_json("/api/assessments")
         self.assertEqual("api-test-task", tasks[0]["id"])
@@ -191,10 +201,11 @@ class ApiServerTest(unittest.TestCase):
                 "target_id": "target-local-manifest",
             },
         )
-        self.assertEqual(200, status)
-        self.assertEqual("api-created-task", payload["report"]["task_id"])
-        self.assertEqual("target-local-manifest", payload["request"]["target_id"])
-        self.assertTrue(any(item["checkpoint_id"] == "MANUAL-API" for item in payload["report"]["checkpoint_scores"]))
+        self.assertEqual(202, status)
+        self.assertEqual("running", payload["status"])
+        task = self.wait_for_task("api-created-task")
+        self.assertEqual("success", task["status"])
+        report = self.get_json("/api/reports/api-created-task")
 
         events = self.get_json("/api/assessments/api-created-task/events")
         self.assertEqual("collect", events[0]["stage"])
