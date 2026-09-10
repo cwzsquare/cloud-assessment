@@ -192,6 +192,23 @@ spec:
       target:
         type: Utilization
         averageUtilization: 70
+status:
+  currentReplicas: 2
+  desiredReplicas: 3
+  lastScaleTime: "2026-06-22T10:12:00Z"
+  currentMetrics:
+  - type: Resource
+    resource:
+      name: cpu
+      current:
+        averageUtilization: 61
+  conditions:
+  - type: AbleToScale
+    status: "True"
+    reason: ReadyForNewScale
+  - type: ScalingActive
+    status: "True"
+    reason: ValidMetricFound
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

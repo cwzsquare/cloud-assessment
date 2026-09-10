@@ -381,3 +381,24 @@ spec:
     port: 5432
     targetPort: 5432
     nodePort: 30432
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cnsec-business-admin
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cnsec-business-admin-binding
+subjects:
+- kind: User
+  name: alice@example.test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cnsec-business-admin

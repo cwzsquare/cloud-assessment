@@ -157,6 +157,9 @@ class CloudNativeAdapter:
             "object_count": len(index.objects),
             "kind_count": len(index.kinds()),
             "kinds": sorted(index.kinds()),
+            # Sanitized objects retain node/config identity for structured
+            # downstream analyzers without persisting Secret values.
+            "objects": index.objects,
             "resource_inventory": _resource_inventory(index),
             "schema_version": "kubernetes-json/v1",
             "collected_at": _utc_now_iso(),

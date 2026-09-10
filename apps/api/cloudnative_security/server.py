@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .adapters import AssessmentRequest
+from .compare import compare_tasks
 from .orchestrator import AssessmentOrchestrator
 from .report_renderer import render_html_report, render_markdown_report
 from .schemas import schema_bundle
@@ -80,6 +81,67 @@ class ApiHandler(BaseHTTPRequestHandler):
             schema = bundle.get("$defs", {}).get(schema_name)
             self._json(schema if schema else {"error": "not found"}, 200 if schema else 404)
             return
+        task_id = query.get("task_id", [None])[0]
+        if parsed.path == "/api/data-sources":
+            self._json(self.store.list_source_descriptors())
+            return
+        if parsed.path == "/api/structured":
+            payload = self.store.get_structured_payload(task_id) if task_id else None
+            self._json(payload if payload and (payload.get("processing_run") or payload.get("authentication") or payload.get("lineage", {}).get("nodes")) else {"error": "not found"}, 200 if payload and (payload.get("processing_run") or payload.get("authentication") or payload.get("lineage", {}).get("nodes")) else 404)
+            return
+        if parsed.path == "/api/processing-runs":
+            self._json(self.store.list_processing_runs(task_id))
+            return
+        if parsed.path.startswith("/api/processing-runs/"):
+            parts = parsed.path.split("/")
+            processing_id = unquote(parts[3]) if len(parts) > 3 else ""
+            if len(parts) == 5 and parts[4] == "steps":
+                self._json(self.store.list_processing_steps(processing_id))
+                return
+            run = self.store.get_processing_run(processing_id)
+            self._json(run if run else {"error": "not found"}, 200 if run else 404)
+            return
+        if parsed.path in {"/api/data-quality", "/api/data-quality/results"}:
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            self._json({"task_id": task_id, "results": payload.get("data_quality_results", [])})
+            return
+        if parsed.path == "/api/lineage":
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            self._json(payload.get("lineage", {"nodes": [], "edges": []}))
+            return
+        if parsed.path.startswith("/api/lineage/finding/"):
+            finding_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            graph = payload.get("lineage", {})
+            nodes = {str(item.get("id", item.get("node_id"))): item for item in graph.get("nodes", [])}
+            wanted = [node for key, node in nodes.items() if finding_id in key]
+            self._json({"nodes": wanted, "edges": [edge for edge in graph.get("edges", []) if any(str(edge.get(k, "")) in nodes for k in ("source", "target", "source_node", "target_node"))]})
+            return
+        if parsed.path == "/api/assets/graph" or parsed.path.startswith("/api/assets/") and parsed.path.endswith("/graph"):
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            self._json(payload.get("asset_graph", {"nodes": [], "edges": []}))
+            return
+        if parsed.path.startswith("/api/authentication"):
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            suffix = parsed.path.removeprefix("/api/authentication").strip("/")
+            key = {"profile": "authentication", "identities": "identities", "service-accounts": "service_account_tokens", "certificates": "certificates", "mtls-coverage": "mtls"}.get(suffix, "authentication")
+            self._json({"task_id": task_id, "data": payload.get(key)})
+            return
+        if parsed.path.startswith("/api/etcd"):
+            payload = self.store.get_structured_payload(task_id) if task_id else {}
+            suffix = parsed.path.removeprefix("/api/etcd").strip("/")
+            key = {"profile": "etcd", "nodes": "etcd", "certificates": "certificates", "encryption": "encryption", "consistency": "consistency"}.get(suffix, "etcd")
+            self._json({"task_id": task_id, "data": payload.get(key, [])})
+            return
+        if parsed.path == "/api/assessments/compare":
+            base_id = query.get("base", [None])[0]
+            current_id = query.get("current", [None])[0]
+            if not base_id or not current_id:
+                self._json({"error": "base and current are required"}, 400)
+                return
+            result = compare_tasks(self.store.task_comparison_payload(base_id), self.store.task_comparison_payload(current_id))
+            self._json(result.to_dict())
+            return
         if parsed.path == "/api/checkpoints":
             self._json(self.store.list_checkpoints())
             return
@@ -102,6 +164,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "rbac_matrix": self.store.query_rbac_matrix(task_id),
                     "task_events": self.store.list_task_events(task_id),
                     "integration_pipeline": summary.get("integration_pipeline"),
+                    "structured": self.store.get_structured_payload(task_id),
                 }
             )
             return

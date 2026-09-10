@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from .integration import build_integration_pipeline
 from .models import AssetRef, AssessmentReport, Evidence, Finding
 from .rules import _finding
 from .scoring import build_report
+from .structured_analysis import build_structured_payload
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,6 @@ class DataQualitySummary:
     checkpoint_coverage_count: int = 0
     checkpoint_total: int = 0
 
-
 @dataclass(frozen=True)
 class OrchestratorResult:
     request: AssessmentRequest
@@ -39,6 +39,7 @@ class OrchestratorResult:
     report: AssessmentReport
     data_quality: DataQualitySummary
     adapter_health: dict[str, Any]
+    structured: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -48,6 +49,7 @@ class OrchestratorResult:
             "report": self.report.to_dict(),
             "data_quality": asdict(self.data_quality),
             "adapter_health": self.adapter_health,
+            "structured": self.structured,
         }
         payload["summary"] = self.report.summary
         return payload
@@ -276,4 +278,9 @@ class AssessmentOrchestrator:
         report.summary["integration_pipeline"] = build_integration_pipeline(
             request, adapter_results, normalized, quality, adapter_health
         )
-        return OrchestratorResult(request, adapter_results, normalized, report, quality, adapter_health)
+        structured = build_structured_payload(request.task_id, adapter_results, normalized, report, quality)
+        report.summary["structured"] = {
+            "schema_version": structured.get("schema_version"),
+            "module_counts": structured.get("module_counts", {}),
+        }
+        return OrchestratorResult(request, adapter_results, normalized, report, quality, adapter_health, structured)

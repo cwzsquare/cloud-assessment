@@ -24,6 +24,9 @@
         <button class="tab active" data-route="overview" type="button">安全总览</button>
         <button class="tab tab-outcome" data-route="findings" type="button">风险问题</button>
         <button class="tab tab-outcome" data-route="observability" type="button">服务与资源</button>
+        <button class="tab tab-outcome" data-route="structured" type="button">数据处理</button>
+        <button class="tab tab-outcome" data-route="authn" type="button">身份认证</button>
+        <button class="tab tab-outcome" data-route="etcd" type="button">状态存储</button>
         <button class="tab tab-outcome" data-route="report" type="button">报告下载</button>
         <details class="nav-secondary">
           <summary>配置与管理</summary>
@@ -230,6 +233,25 @@
           </div>
         </section>
 
+        <section id="structured" class="view">
+          <div class="feature-hero"><div><span class="eyebrow">30.3 数据处理</span><h2>从原始输入到评估报告</h2><p>展示本次任务真实产生的来源、流水线步骤、质量规则、血缘和资产关系数据。</p></div><div class="hero-badge"><strong id="structuredStepCount">--</strong><span>处理步骤</span></div></div>
+          <div id="structuredStats" class="summary-grid compact-grid"></div>
+          <section class="panel"><h2>处理流水线</h2><div class="table-wrap"><table><thead><tr><th>步骤</th><th>状态</th><th>输入</th><th>输出</th><th>丢弃</th><th>警告</th><th>错误</th><th>耗时</th></tr></thead><tbody id="structuredSteps"></tbody></table></div></section>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>数据质量规则</h2><div class="table-wrap"><table><thead><tr><th>规则</th><th>维度</th><th>状态</th><th>得分</th><th>异常</th></tr></thead><tbody id="structuredQuality"></tbody></table></div></section>
+            <section class="panel"><h2>数据血缘</h2><div id="structuredLineage" class="quality-grid"></div></section>
+          </div>
+        </section>
+        <section id="authn" class="view">
+          <div class="feature-hero"><div><span class="eyebrow">30.10 身份认证</span><h2>认证方式与身份主体画像</h2><p>认证参数、服务账号令牌、RBAC 主体和双向传输覆盖均来自当前任务证据。</p></div></div>
+          <section class="panel"><h2>认证方式总览</h2><div id="authnProfile" class="quality-grid"></div></section>
+          <div class="dashboard-grid two"><section class="panel"><h2>服务账号令牌</h2><div class="table-wrap"><table><thead><tr><th>工作负载</th><th>服务账号</th><th>有效挂载</th><th>投射令牌</th><th>有效期</th><th>受众</th><th>状态</th></tr></thead><tbody id="authnTokens"></tbody></table></div></section><section class="panel"><h2>身份主体</h2><div class="table-wrap"><table><thead><tr><th>主体</th><th>类型</th><th>角色</th><th>危险权限</th><th>状态</th></tr></thead><tbody id="authnIdentities"></tbody></table></div></section></div>
+        </section>
+        <section id="etcd" class="view">
+          <div class="feature-hero"><div><span class="eyebrow">30.12 状态存储</span><h2>etcd 节点与静态加密画像</h2><p>按节点保留监听面与证书认证语义；没有控制面证据时显示信息不足。</p></div></div>
+          <section class="panel"><h2>etcd 节点</h2><div class="table-wrap"><table><thead><tr><th>节点</th><th>客户端监听</th><th>对等监听</th><th>客户端证书认证</th><th>对等证书认证</th><th>状态</th></tr></thead><tbody id="etcdNodes"></tbody></table></div></section>
+          <div class="dashboard-grid two"><section class="panel"><h2>静态加密配置</h2><div id="etcdEncryption" class="quality-grid"></div></section><section class="panel"><h2>双向传输覆盖</h2><div id="etcdMtls" class="quality-grid"></div></section></div>
+        </section>
         <section id="report" class="view">
           <section class="panel">
             <div class="section-head"><h2>报告下载</h2><div class="actions"><a id="jsonLink" href="#" target="_blank" rel="noreferrer">下载 JSON</a><a id="markdownLink" href="#" target="_blank" rel="noreferrer">下载 Markdown</a><a id="htmlLink" href="#" target="_blank" rel="noreferrer">打开 HTML</a></div></div>

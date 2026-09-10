@@ -99,10 +99,214 @@ CREATE TABLE IF NOT EXISTS metric_weights (
   weight REAL NOT NULL,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS source_descriptors (
+  source_id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  connection_mode TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL,
+  schema_name TEXT NOT NULL,
+  schema_version TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collection_runs (
+  run_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  object_count INTEGER NOT NULL DEFAULT 0,
+  byte_count INTEGER NOT NULL DEFAULT 0,
+  warning_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  content_hash TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS collection_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  error_code TEXT,
+  error_message TEXT
+);
+CREATE TABLE IF NOT EXISTS processing_runs (
+  processing_run_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  source_run_ids_json TEXT NOT NULL,
+  pipeline_version TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  summary_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS processing_step_runs (
+  step_id TEXT PRIMARY KEY,
+  processing_run_id TEXT NOT NULL,
+  step_type TEXT NOT NULL,
+  step_order INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  input_count INTEGER NOT NULL DEFAULT 0,
+  output_count INTEGER NOT NULL DEFAULT 0,
+  drop_count INTEGER NOT NULL DEFAULT 0,
+  warning_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  duration_ms REAL NOT NULL DEFAULT 0,
+  summary_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS field_mapping_rules (
+  mapping_id TEXT PRIMARY KEY,
+  source_schema TEXT NOT NULL,
+  target_schema TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  target_path TEXT NOT NULL,
+  transform TEXT NOT NULL,
+  required INTEGER NOT NULL DEFAULT 0,
+  default_value_json TEXT
+);
+CREATE TABLE IF NOT EXISTS cleaning_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  before_value TEXT,
+  after_value TEXT,
+  reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS data_conflicts (
+  conflict_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  candidate_values_json TEXT NOT NULL,
+  selected_source TEXT,
+  resolution_reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS data_quality_rules (
+  rule_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  dimension TEXT NOT NULL,
+  target_scope TEXT NOT NULL,
+  threshold REAL NOT NULL,
+  severity TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS data_quality_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  score REAL NOT NULL,
+  total_count INTEGER NOT NULL,
+  failed_count INTEGER NOT NULL,
+  examples_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lineage_nodes (
+  node_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  node_type TEXT NOT NULL,
+  name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lineage_edges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  source_node TEXT NOT NULL,
+  target_node TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  UNIQUE(task_id, source_node, target_node, relation)
+);
+CREATE TABLE IF NOT EXISTS normalized_assets (
+  asset_key TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  asset_json TEXT NOT NULL,
+  PRIMARY KEY(task_id, asset_key)
+);
+CREATE TABLE IF NOT EXISTS asset_edges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  source_node TEXT NOT NULL,
+  target_node TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  UNIQUE(task_id, source_node, target_node, relation)
+);
+CREATE TABLE IF NOT EXISTS authentication_profiles (
+  task_id TEXT PRIMARY KEY,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS identity_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  identity_key TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS service_account_token_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  identity_key TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS certificate_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  certificate_key TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mtls_coverage_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  workload_key TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS etcd_node_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  node_name TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS apiserver_etcd_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS encryption_resource_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  resource_key TEXT NOT NULL,
+  rule_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kms_provider_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS config_consistency_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_comparisons (
+  comparison_id TEXT PRIMARY KEY,
+  baseline_task_id TEXT NOT NULL,
+  current_task_id TEXT NOT NULL,
+  comparison_json TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_findings_task ON findings(task_id);
 CREATE INDEX IF NOT EXISTS idx_findings_filter ON findings(task_id, tool_id, checkpoint_id, severity, status);
 CREATE INDEX IF NOT EXISTS idx_raw_snapshots_task ON raw_snapshots(task_id);
 CREATE INDEX IF NOT EXISTS idx_assessment_events_task ON assessment_events(task_id, id);
+CREATE INDEX IF NOT EXISTS idx_processing_runs_task ON processing_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_quality_results_task ON data_quality_results(task_id);
+CREATE INDEX IF NOT EXISTS idx_lineage_nodes_task ON lineage_nodes(task_id);
+CREATE INDEX IF NOT EXISTS idx_asset_nodes_task ON normalized_assets(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_comparison_tasks ON task_comparisons(baseline_task_id, current_task_id);
 """
 
 
@@ -198,6 +402,366 @@ class AssessmentStore:
                         json.dumps({checkpoint.rule_group: True}, ensure_ascii=False),
                     ),
                 )
+    @staticmethod
+    def _jsonable(value: Any) -> Any:
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if hasattr(value, "__dataclass_fields__"):
+            return asdict(value)
+        return value
+
+    def save_structured_payload(self, task_id: str, payload: dict[str, Any] | None) -> None:
+        """Persist structured processing and module data without flattening snapshots."""
+        payload = payload or {}
+        with self.lock:
+            for source in payload.get("sources", []) or []:
+                item = self._jsonable(source)
+                if isinstance(item, dict) and item.get("source_id"):
+                    self.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO source_descriptors
+                        (source_id, source_type, display_name, connection_mode, capabilities_json, schema_name, schema_version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(item["source_id"]), str(item.get("source_type", "unknown")),
+                            str(item.get("name") or item.get("display_name") or item["source_id"]),
+                            str(item.get("metadata", {}).get("mode", "unknown")),
+                            json.dumps(item.get("metadata", {}).get("capabilities", []), ensure_ascii=False),
+                            str(item.get("source_type", "unknown")),
+                            str(item.get("version") or "unknown"),
+                        ),
+                    )
+            for collection in payload.get("collection_runs", []) or []:
+                item = self._jsonable(collection)
+                if isinstance(item, dict) and item.get("run_id"):
+                    source = item.get("source") or {}
+                    self.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO collection_runs
+                        (run_id, task_id, source_id, started_at, finished_at, status, object_count, byte_count, warning_count, error_count, content_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(item["run_id"]), task_id, str(source.get("source_id", "unknown")),
+                            str(item.get("started_at", "")), item.get("completed_at"),
+                            str(item.get("status", "SUCCESS")), int(item.get("output_count", item.get("input_count", 0))),
+                            int(item.get("byte_count", 0)), len(item.get("warnings", []) or []),
+                            len(item.get("errors", []) or []), str(item.get("content_hash", "")),
+                        ),
+                    )
+            processing = self._jsonable(payload.get("processing_run"))
+            processing_id = str(processing.get("run_id") or processing.get("processing_run_id")) if isinstance(processing, dict) and (processing.get("run_id") or processing.get("processing_run_id")) else ""
+            if isinstance(processing, dict) and processing_id:
+                self.conn.execute("DELETE FROM processing_step_runs WHERE processing_run_id = ?", (processing_id,))
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO processing_runs
+                    (processing_run_id, task_id, source_run_ids_json, pipeline_version, started_at, finished_at, status, summary_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        processing_id, task_id,
+                        json.dumps([item.get("run_id") for item in payload.get("collection_runs", []) if isinstance(item, dict)], ensure_ascii=False),
+                        "structured/v1", str(processing.get("started_at", "")), processing.get("completed_at"),
+                        str(processing.get("status", "SUCCESS")), json.dumps(processing.get("summary", {}), ensure_ascii=False, default=str),
+                    ),
+                )
+                for order, step in enumerate(payload.get("processing_steps", []) or processing.get("steps", []) or [], start=1):
+                    item = self._jsonable(step)
+                    if not isinstance(item, dict) or not item.get("step_id"):
+                        continue
+                    self.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO processing_step_runs
+                        (step_id, processing_run_id, step_type, step_order, started_at, finished_at, status,
+                         input_count, output_count, drop_count, warning_count, error_count, duration_ms, summary_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(item["step_id"]), processing_id, str(item.get("step_name", item.get("step_type", "unknown"))),
+                            int(item.get("step_order", order)), str(item.get("started_at", "")),
+                            item.get("completed_at", item.get("finished_at")), str(item.get("status", "SUCCESS")),
+                            int(item.get("input_count", 0)), int(item.get("output_count", 0)),
+                            int(item.get("drop_count", 0)), len(item.get("warnings", []) or []),
+                            len(item.get("errors", []) or []), float(item.get("duration_ms", 0)),
+                            json.dumps(item.get("summary", {}), ensure_ascii=False, default=str),
+                        ),
+                    )
+
+            self.conn.execute("DELETE FROM data_quality_results WHERE task_id = ?", (task_id,))
+            for result in payload.get("data_quality_results", []) or []:
+                item = self._jsonable(result)
+                if isinstance(item, dict) and item.get("rule_id"):
+                    self.conn.execute(
+                        """
+                        INSERT INTO data_quality_results
+                        (task_id, rule_id, status, score, total_count, failed_count, examples_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            task_id, str(item["rule_id"]), str(item.get("status", "UNKNOWN")),
+                            float(item.get("score") if item.get("score") is not None else 0),
+                            int(item.get("total_count", 0)),
+                            int(item.get("failed_count", 0)),
+                            json.dumps(item.get("examples", []), ensure_ascii=False, default=str),
+                        ),
+                    )
+
+            for rule in payload.get("field_mapping_rules", []) or []:
+                item = self._jsonable(rule)
+                if isinstance(item, dict) and item.get("mapping_id"):
+                    self.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO field_mapping_rules
+                        (mapping_id, source_schema, target_schema, source_path, target_path, transform, required, default_value_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(item["mapping_id"]), str(item.get("source_schema", "")), str(item.get("target_schema", "")),
+                            str(item.get("source_path", "")), str(item.get("target_path", "")), str(item.get("transform", "identity")),
+                            int(bool(item.get("required"))), json.dumps(item.get("default_value"), ensure_ascii=False, default=str),
+                        ),
+                    )
+            self.conn.execute("DELETE FROM cleaning_actions WHERE task_id = ?", (task_id,))
+            for action in payload.get("cleaning_actions", []) or []:
+                item = self._jsonable(action)
+                if isinstance(item, dict):
+                    self.conn.execute(
+                        """
+                        INSERT INTO cleaning_actions
+                        (task_id, source_id, object_key, field_path, action_type, before_value, after_value, reason)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            task_id, str(item.get("source_id", "")), str(item.get("object_key", "")),
+                            str(item.get("field_path", "")), str(item.get("action_type", item.get("action", ""))),
+                            json.dumps(item.get("before_value"), ensure_ascii=False, default=str),
+                            json.dumps(item.get("after_value"), ensure_ascii=False, default=str),
+                            str(item.get("reason", "")),
+                        ),
+                    )
+            self.conn.execute("DELETE FROM data_conflicts WHERE task_id = ?", (task_id,))
+            for conflict in payload.get("data_conflicts", []) or []:
+                item = self._jsonable(conflict)
+                if isinstance(item, dict) and item.get("conflict_id"):
+                    self.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO data_conflicts
+                        (conflict_id, task_id, object_key, field_path, candidate_values_json, selected_source, resolution_reason)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(item["conflict_id"]), task_id, str(item.get("object_key", "")), str(item.get("field_path", "")),
+                            json.dumps(item.get("candidate_values", item.get("candidates", [])), ensure_ascii=False, default=str),
+                            item.get("selected_source"), str(item.get("resolution_reason", "")),
+                        ),
+                    )
+
+            lineage = payload.get("lineage") or {}
+            self.conn.execute("DELETE FROM lineage_nodes WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM lineage_edges WHERE task_id = ?", (task_id,))
+            for node in lineage.get("nodes", []) or []:
+                item = self._jsonable(node)
+                if isinstance(item, dict) and item.get("node_id"):
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO lineage_nodes(node_id, task_id, node_type, name) VALUES (?, ?, ?, ?)",
+                        (str(item["node_id"]), task_id, str(item.get("node_type", "unknown")), str(item.get("name", item["node_id"]))),
+                    )
+            for edge in lineage.get("edges", []) or []:
+                item = self._jsonable(edge)
+                source = item.get("source_node", item.get("source")) if isinstance(item, dict) else None
+                target = item.get("target_node", item.get("target")) if isinstance(item, dict) else None
+                if source and target:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO lineage_edges(task_id, source_node, target_node, relation) VALUES (?, ?, ?, ?)",
+                        (task_id, str(source), str(target), str(item.get("relation", "related"))),
+                    )
+
+            graph = payload.get("asset_graph") or {}
+            self.conn.execute("DELETE FROM normalized_assets WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM asset_edges WHERE task_id = ?", (task_id,))
+            for node in graph.get("nodes", []) or []:
+                item = self._jsonable(node)
+                key = item.get("key", item.get("id")) if isinstance(item, dict) else None
+                if key:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO normalized_assets(asset_key, task_id, asset_json) VALUES (?, ?, ?)",
+                        (str(key), task_id, json.dumps(item, ensure_ascii=False, default=str)),
+                    )
+            for edge in graph.get("edges", []) or []:
+                item = self._jsonable(edge)
+                source = item.get("source") if isinstance(item, dict) else None
+                target = item.get("target") if isinstance(item, dict) else None
+                if source and target:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO asset_edges(task_id, source_node, target_node, relation) VALUES (?, ?, ?, ?)",
+                        (task_id, str(source), str(target), str(item.get("relation", "related"))),
+                    )
+            self._save_profile(task_id, "authentication", payload.get("authentication"))
+            self._save_profile(task_id, "identities", payload.get("identities"))
+            self._save_profile(task_id, "service_account_tokens", payload.get("service_account_tokens"))
+            self._save_profile(task_id, "etcd", payload.get("etcd"))
+            self._save_profile(task_id, "apiserver_etcd", payload.get("apiserver_etcd"))
+            self._save_profile(task_id, "encryption", payload.get("encryption"))
+            self._save_profile(task_id, "mtls", payload.get("mtls"))
+            self.conn.execute("DELETE FROM certificate_profiles WHERE task_id = ?", (task_id,))
+            for index, certificate in enumerate(payload.get("certificates", []) or []):
+                item = self._jsonable(certificate)
+                if isinstance(item, dict):
+                    key = str(item.get("source") or item.get("serial_number") or f"certificate-{index}")
+                    self.conn.execute(
+                        "INSERT INTO certificate_profiles(task_id, certificate_key, profile_json) VALUES (?, ?, ?)",
+                        (task_id, key, json.dumps(item, ensure_ascii=False, default=str)),
+                    )
+            self.conn.execute("DELETE FROM config_consistency_results WHERE task_id = ?", (task_id,))
+            consistency = self._jsonable(payload.get("config_consistency"))
+            if isinstance(consistency, dict):
+                self.conn.execute(
+                    "INSERT INTO config_consistency_results(task_id, category, result_json) VALUES (?, ?, ?)",
+                    (task_id, "etcd", json.dumps(consistency, ensure_ascii=False, default=str)),
+                )
+            self.conn.commit()
+
+    def _save_profile(self, task_id: str, category: str, value: Any) -> None:
+        if value is None:
+            return
+        payload = self._jsonable(value)
+        if category == "authentication":
+            self.conn.execute(
+                "INSERT OR REPLACE INTO authentication_profiles(task_id, profile_json) VALUES (?, ?)",
+                (task_id, json.dumps(payload, ensure_ascii=False, default=str)),
+            )
+            return
+        config = {
+            "identities": ("identity_profiles", "identity_key"),
+            "service_account_tokens": ("service_account_token_profiles", "identity_key"),
+            "etcd": ("etcd_node_profiles", "node_name"),
+            "apiserver_etcd": ("apiserver_etcd_profiles", "server_name"),
+            "encryption": ("encryption_resource_rules", "resource_key"),
+            "mtls": ("mtls_coverage_results", "workload_key"),
+        }.get(category)
+        if not config:
+            return
+        table, key_name = config
+        self.conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (task_id,))
+        rows = payload if isinstance(payload, list) else [payload] if isinstance(payload, dict) else []
+        for index, item in enumerate(rows):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get(key_name) or item.get("workload") or item.get("name") or f"{category}-{index}")
+            if category == "identities":
+                self.conn.execute("INSERT INTO identity_profiles(task_id, identity_key, profile_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+            elif category == "service_account_tokens":
+                self.conn.execute("INSERT INTO service_account_token_profiles(task_id, identity_key, profile_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+            elif category == "etcd":
+                self.conn.execute("INSERT INTO etcd_node_profiles(task_id, node_name, profile_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+            elif category == "apiserver_etcd":
+                self.conn.execute("INSERT INTO apiserver_etcd_profiles(task_id, server_name, profile_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+            elif category == "encryption":
+                rules = item.get("rules", []) if isinstance(item.get("rules"), list) else [item]
+                for rule_index, rule in enumerate(rules):
+                    resource_key = str((rule.get("resources") or [f"{key}-{rule_index}"])[0]) if isinstance(rule, dict) else f"{key}-{rule_index}"
+                    self.conn.execute("INSERT INTO encryption_resource_rules(task_id, resource_key, rule_json) VALUES (?, ?, ?)", (task_id, resource_key, json.dumps(self._jsonable(rule), ensure_ascii=False, default=str)))
+            elif category == "mtls":
+                self.conn.execute("INSERT INTO mtls_coverage_results(task_id, workload_key, result_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+    def list_processing_runs(self, task_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM processing_runs"
+        params: tuple[Any, ...] = ()
+        if task_id:
+            query += " WHERE task_id = ?"
+            params = (task_id,)
+        query += " ORDER BY started_at DESC"
+        with self.lock:
+            rows = self.conn.execute(query, params).fetchall()
+            return [
+                dict(row)
+                | {"source_run_ids": json.loads(row["source_run_ids_json"]), "summary": json.loads(row["summary_json"])}
+                for row in rows
+            ]
+
+    def get_processing_run(self, processing_run_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.conn.execute("SELECT * FROM processing_runs WHERE processing_run_id = ?", (processing_run_id,)).fetchone()
+            return (
+                dict(row)
+                | {"source_run_ids": json.loads(row["source_run_ids_json"]), "summary": json.loads(row["summary_json"])}
+                if row else None
+            )
+
+    def list_processing_steps(self, processing_run_id: str) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute("SELECT * FROM processing_step_runs WHERE processing_run_id = ? ORDER BY step_order", (processing_run_id,)).fetchall()
+            return [dict(row) | {"step_name": row["step_type"], "summary": json.loads(row["summary_json"])} for row in rows]
+
+    def get_structured_payload(self, task_id: str) -> dict[str, Any]:
+        with self.lock:
+            runs = self.list_processing_runs(task_id)
+            processing = runs[0] if runs else None
+            steps = self.list_processing_steps(processing["processing_run_id"]) if processing else []
+            quality_rows = self.conn.execute("SELECT * FROM data_quality_results WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            nodes = self.conn.execute("SELECT node_id, node_type, name FROM lineage_nodes WHERE task_id = ?", (task_id,)).fetchall()
+            edges = self.conn.execute("SELECT source_node, target_node, relation FROM lineage_edges WHERE task_id = ?", (task_id,)).fetchall()
+            assets = self.conn.execute("SELECT asset_json FROM normalized_assets WHERE task_id = ?", (task_id,)).fetchall()
+            asset_edges = self.conn.execute("SELECT source_node AS source, target_node AS target, relation FROM asset_edges WHERE task_id = ?", (task_id,)).fetchall()
+            auth = self.conn.execute("SELECT profile_json FROM authentication_profiles WHERE task_id = ?", (task_id,)).fetchone()
+            identities = self.conn.execute("SELECT profile_json FROM identity_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            tokens = self.conn.execute("SELECT profile_json FROM service_account_token_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            etcd = self.conn.execute("SELECT profile_json FROM etcd_node_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            apiserver_etcd = self.conn.execute("SELECT profile_json FROM apiserver_etcd_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            encryption = self.conn.execute("SELECT rule_json FROM encryption_resource_rules WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            mtls = self.conn.execute("SELECT result_json FROM mtls_coverage_results WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            certificates = self.conn.execute("SELECT profile_json FROM certificate_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            consistency = self.conn.execute("SELECT result_json FROM config_consistency_results WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            cleaning = self.conn.execute("SELECT * FROM cleaning_actions WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
+            conflicts = self.conn.execute("SELECT * FROM data_conflicts WHERE task_id = ? ORDER BY conflict_id", (task_id,)).fetchall()
+            sources = self.conn.execute(
+                "SELECT source_id, source_type, display_name AS name, schema_version AS version FROM source_descriptors ORDER BY source_id"
+            ).fetchall()
+            collections = self.conn.execute(
+                "SELECT run_id, task_id, source_id, started_at, finished_at AS completed_at, status, object_count, byte_count, warning_count, error_count, content_hash FROM collection_runs WHERE task_id = ? ORDER BY started_at",
+                (task_id,),
+            ).fetchall()
+            return {
+                "sources": [dict(row) for row in sources],
+                "collection_runs": [dict(row) for row in collections],
+                "processing_run": processing,
+                "processing_steps": steps,
+                "data_quality_results": [dict(row) | {"examples": json.loads(row["examples_json"])} for row in quality_rows],
+                "lineage": {"nodes": [dict(row) for row in nodes], "edges": [dict(row) for row in edges]},
+                "asset_graph": {"nodes": [json.loads(row["asset_json"]) for row in assets], "edges": [dict(row) for row in asset_edges]},
+                "authentication": json.loads(auth["profile_json"]) if auth else None,
+                "identities": [json.loads(row["profile_json"]) for row in identities],
+                "service_account_tokens": [json.loads(row["profile_json"]) for row in tokens],
+                "etcd": [json.loads(row["profile_json"]) for row in etcd],
+                "apiserver_etcd": [json.loads(row["profile_json"]) for row in apiserver_etcd],
+                "encryption": [json.loads(row["rule_json"]) for row in encryption],
+                "mtls": [json.loads(row["result_json"]) for row in mtls],
+                "certificates": [json.loads(row["profile_json"]) for row in certificates],
+                "config_consistency": json.loads(consistency[0]["result_json"]) if consistency else None,
+                "cleaning_actions": [dict(row) | {"before_value": json.loads(row["before_value"]), "after_value": json.loads(row["after_value"])} for row in cleaning],
+                "data_conflicts": [dict(row) | {"candidate_values": json.loads(row["candidate_values_json"])} for row in conflicts],
+            }
+    def list_source_descriptors(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute("SELECT * FROM source_descriptors ORDER BY source_id").fetchall()
+            return [
+                dict(row)
+                | {
+                    "capabilities": json.loads(row["capabilities_json"]),
+                }
+                for row in rows
+            ]
+
+    def task_comparison_payload(self, task_id: str) -> dict[str, Any]:
+        report = self.get_report(task_id) or {}
+        return {
+            "task_id": task_id,
+            "findings": self.list_findings(task_id),
+            "assets": self.get_structured_payload(task_id).get("asset_graph", {}).get("nodes", []),
+            "checkpoint_scores": report.get("checkpoint_scores", []),
+            "summary": report.get("summary", {}),
+        }
 
     def create_target(self, payload: dict[str, Any]) -> dict[str, Any]:
         target_id = str(payload.get("id") or f"target-{uuid.uuid4().hex[:12]}")
@@ -368,6 +932,28 @@ class AssessmentStore:
             self.conn.execute("DELETE FROM raw_snapshots WHERE task_id = ?", (task_id,))
             self.conn.execute("DELETE FROM findings WHERE task_id = ?", (task_id,))
             self.conn.execute("DELETE FROM reports WHERE task_id = ?", (task_id,))
+            self.conn.execute(
+                "DELETE FROM processing_step_runs WHERE processing_run_id IN (SELECT processing_run_id FROM processing_runs WHERE task_id = ?)",
+                (task_id,),
+            )
+            self.conn.execute("DELETE FROM processing_runs WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM data_quality_results WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM lineage_nodes WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM lineage_edges WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM normalized_assets WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM asset_edges WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM authentication_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM identity_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM service_account_token_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM certificate_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM etcd_node_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM apiserver_etcd_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM encryption_resource_rules WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM kms_provider_profiles WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM config_consistency_results WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM cleaning_actions WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM data_conflicts WHERE task_id = ?", (task_id,))
+            self.conn.execute("DELETE FROM mtls_coverage_results WHERE task_id = ?", (task_id,))
 
     def save_result(self, result: Any) -> AssessmentReport:
         with self.lock:
@@ -378,6 +964,7 @@ class AssessmentStore:
             self.save_findings(result.findings)
             report = self.build_dynamic_report(result.request.task_id, result.findings, result.report.summary)
             self.save_report(report)
+            self.save_structured_payload(result.request.task_id, result.structured)
             self.replace_task_events(result.request.task_id, completed_task_events(result))
             self.conn.commit()
             return report

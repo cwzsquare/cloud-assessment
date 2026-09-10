@@ -39,3 +39,12 @@ Run tests:
 ```bash
 PYTHONPATH=apps/api python3 -m unittest discover -s apps/api/tests -v
 ```
+
+Structured evidence products are available from the API and dashboard:
+
+- `/api/structured?task_id=...`: processing steps, data-quality results, lineage, asset graph, authentication, etcd, encryption, certificates, and mTLS profiles.
+- `/api/processing-runs` and `/api/processing-runs/{id}/steps`: persisted collection/processing lifecycle.
+- `/api/data-quality`, `/api/lineage`, `/api/assets/graph`, `/api/authentication/*`, and `/api/etcd/*`: focused query surfaces.
+- Dashboard routes `#structured`, `#authn`, and `#etcd` expose the same persisted products without displaying secret material.
+
+The structured pipeline records mapping, conservative cleaning, deduplication/conflict resolution, quality dimensions, and reverse-traceable lineage. Missing source evidence stays `UNKNOWN`; partial collection results are retained.
