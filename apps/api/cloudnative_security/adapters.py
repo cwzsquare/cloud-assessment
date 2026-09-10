@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .collector import ResourceIndex, collect_kubectl, collect_pve_kubectl, load_manifest_path
+from .collection_executor import CollectionExecutor
 from .models import AssetRef, Evidence, Finding
 from .rbac_matrix import build_rbac_matrix
 from .rules import _finding, run_rules
@@ -130,22 +131,37 @@ def _resource_spec_summary(obj: dict[str, Any]) -> dict[str, Any]:
 
 class CloudNativeAdapter:
     tool_id = "cloud_native"
+    capabilities = (
+        "resource_inventory",
+        "rbac",
+        "control_plane_manifests",
+        "auth_logs",
+        "encryption_config",
+        "certificate_metadata",
+        "runtime_events",
+    )
+
+    def __init__(self, executor: CollectionExecutor | None = None) -> None:
+        self.executor = executor or CollectionExecutor()
 
     def healthcheck(self) -> dict[str, Any]:
-        return {"tool_id": self.tool_id, "status": "ready", "modes": ["manifest", "kubeconfig", "pve_ssh"]}
+        return {"tool_id": self.tool_id, "status": "ready", "modes": ["manifest", "kubeconfig", "pve_ssh"], "capabilities": list(self.capabilities)}
 
     def evaluate(self, request: AssessmentRequest) -> AdapterResult:
         if request.manifest:
-            index = load_manifest_path(request.manifest)
             mode = "manifest"
+            collect = lambda: load_manifest_path(request.manifest)
         elif request.kubeconfig:
-            index = collect_kubectl(request.kubeconfig)
             mode = "kubeconfig"
+            collect = lambda: collect_kubectl(request.kubeconfig)
         elif request.pve_ssh:
-            index = collect_pve_kubectl(request.pve_ssh, request.control_plane_ip, request.ssh_key, request.ssh_user)
             mode = "pve_ssh"
+            collect = lambda: collect_pve_kubectl(request.pve_ssh, request.control_plane_ip, request.ssh_key, request.ssh_user)
         else:
-            raise ValueError("CloudNativeAdapter requires manifest, kubeconfig, or pve_ssh")
+            mode = "unknown"
+            collect = lambda: (_ for _ in ()).throw(ValueError("CloudNativeAdapter requires manifest, kubeconfig, or pve_ssh"))
+        source = {"source_id": self.tool_id, "task_id": request.task_id, "name": self.tool_id, "metadata": {"mode": mode, "capabilities": list(self.capabilities)}}
+        index = self.executor.execute(source, collect, request.options.get("collection_retry_policy", request.options.get("retry_policy")))
         for extra_manifest in request.extra_manifests:
             extra_index = load_manifest_path(extra_manifest)
             index.objects.extend(extra_index.objects)
@@ -153,7 +169,10 @@ class CloudNativeAdapter:
         findings = run_rules(index, request.task_id)
         rbac_matrix = build_rbac_matrix(index)
         raw_summary = {
+            "source_id": self.tool_id,
             "mode": mode,
+            "stub_mode": False,
+            "capabilities": list(self.capabilities),
             "object_count": len(index.objects),
             "kind_count": len(index.kinds()),
             "kinds": sorted(index.kinds()),
@@ -164,6 +183,8 @@ class CloudNativeAdapter:
             "schema_version": "kubernetes-json/v1",
             "collected_at": _utc_now_iso(),
             "rbac_matrix": rbac_matrix,
+            "collection_run": self.executor.last_run.to_dict() if self.executor.last_run else None,
+            "collection_attempts": [attempt.to_dict() for attempt in self.executor.last_attempts],
         }
         return AdapterResult(self.tool_id, findings, raw_summary, index.warnings)
 
@@ -211,7 +232,7 @@ class CloudApiSecurityAdapterStub:
                 "api_endpoint": endpoint,
                 "api_auth_mode": auth_mode,
             },
-            "capabilities": ["api_asset_inventory", "credential_posture", "api_exposure", "audit_log_presence", "mfa_and_rotation"],
+            "capabilities": [],
             "integration_contract": {"input": "AssessmentRequest.options.cloud_api_input", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
             "replacement_note": "当前为按标书 API 工具适配要求构造的示例输入；真实部门数据接入后替换 input，不改变 Finding[] 输出契约。",
             "mock_assets": [account_asset.kind, endpoint_asset.kind],
@@ -259,7 +280,7 @@ class SmartCloudSecurityAdapterStub:
                 "gpu_pool": gpu_pool,
                 "model_endpoint": model_endpoint,
             },
-            "capabilities": ["distributed_assessment", "gpu_workload_posture", "model_endpoint_exposure", "dataset_audit", "image_provenance"],
+            "capabilities": [],
             "integration_contract": {"input": "AssessmentRequest.options.smart_cloud_input", "output": "Finding[]", "detail_view_tool_id": self.tool_id},
             "replacement_note": "当前为按标书智算云工具适配要求构造的示例输入；真实部门数据接入后替换 input，不改变 Finding[] 输出契约。",
             "mock_assets": [workspace_asset.kind, model_asset.kind],
@@ -345,7 +366,7 @@ class RegistrySecurityAdapterStub:
             "input_schema": "registry-tool/v1",
             "input": source_input,
             "target_parameters": {"registry_endpoint": registry},
-            "capabilities": ["registry_inventory", "registry_endpoint_posture", "registry_audit_events", "vulnerability_scan", "secret_scan"],
+            "capabilities": [],
             "integration_contract": {
                 "input": "AssessmentRequest.options.registry_input",
                 "output": "Finding[] + raw registry evidence",

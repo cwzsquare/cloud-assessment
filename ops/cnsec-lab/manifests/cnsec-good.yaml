@@ -387,3 +387,12 @@ spec:
     ports:
     - protocol: TCP
       port: 5432
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: orders-db-data-snapshot
+  namespace: cnsec-good
+spec:
+  source:
+    persistentVolumeClaimName: orders-db-data

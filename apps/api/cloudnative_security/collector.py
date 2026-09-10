@@ -10,6 +10,17 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+from .certificate_inspector import inspect_control_plane_certificates
+
+_SECRET_TEXT_PATTERN = re.compile(
+    r"(?i)(bearer\s+)[^\s,;]+|((?:password|passwd|token|secret|private[_-]?key|api[_-]?key)\s*[=:]\s*)[^\s,;]+"
+)
+
+
+def _safe_collection_message(value: Any) -> str:
+    text = str(value or "").replace("\x00", " ")
+    text = _SECRET_TEXT_PATTERN.sub(lambda match: f"{match.group(1) or match.group(2) or ''}[REDACTED]", text)
+    return text[:1000]
 
 
 KUBECTL_RESOURCES = [
@@ -137,7 +148,7 @@ def load_manifest_path(path: str | Path) -> ResourceIndex:
             else:
                 docs = list(yaml.safe_load_all(file_path.read_text()))
         except Exception as exc:  # pragma: no cover - defensive path
-            warnings.append(f"failed to parse {file_path}: {exc}")
+            warnings.append(f"failed to parse {file_path}: {_safe_collection_message(exc)}")
             continue
         for doc in docs:
             if isinstance(doc, dict) and doc.get("kind") == "List":
@@ -231,7 +242,7 @@ def collect_kubectl(kubeconfig: str | None = None, kubectl: str = "kubectl") -> 
             cmd = [*base, "get", resource, "-o", "json"]
         proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
         if proc.returncode != 0:
-            warnings.append(f"{resource}: {proc.stderr.strip()}")
+            warnings.append(f"{resource}: {_safe_collection_message(proc.stderr)}")
             continue
         payload = json.loads(proc.stdout)
         objects.extend(payload.get("items", []))
@@ -415,6 +426,22 @@ def collect_pve_control_plane_manifests(
                 continue
             manifest = parse_static_pod_manifest(proc.stdout, path, node_name, node_ip)
             if manifest:
+                def read_public_certificate(cert_path: str) -> str:
+                    cert_inner = f"sudo cat {shlex.quote(cert_path)} 2>/dev/null"
+                    cert_remote = _nested_ssh_remote(ssh_key, user, node_ip, cert_inner)
+                    cert_proc = subprocess.run(["ssh", pve_ssh, cert_remote], text=True, capture_output=True, check=False)
+                    if cert_proc.returncode != 0 or not cert_proc.stdout.strip():
+                        raise RuntimeError("public certificate file was not readable")
+                    return cert_proc.stdout
+
+                certificate_entries = inspect_control_plane_certificates(
+                    manifest.get("command") or [],
+                    read_public_certificate,
+                    component=str(manifest.get("component") or ""),
+                    expected_sans=[node_ip, control_plane_ip],
+                )
+                if certificate_entries:
+                    manifest["certificates"] = [entry.to_dict() for entry in certificate_entries]
                 manifests.append(manifest)
                 encryption_config_path = _command_flag_value(manifest.get("command") or [], "encryption-provider-config")
                 if encryption_config_path:
@@ -463,7 +490,7 @@ def collect_pve_kubectl(
         remote = _nested_ssh_remote(ssh_key, user, control_plane_ip, inner)
         proc = subprocess.run(["ssh", pve_ssh, remote], text=True, capture_output=True, check=False)
         if proc.returncode != 0:
-            warnings.append(f"{resource}: {proc.stderr.strip()}")
+            warnings.append(f"{resource}: {_safe_collection_message(proc.stderr)}")
             continue
         payload = json.loads(proc.stdout)
         objects.extend(payload.get("items", []))

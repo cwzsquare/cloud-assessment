@@ -8,21 +8,45 @@
     checkpoints: [],
     rawSnapshots: [],
     structured: null,
+    fieldMappings: [],
+    cleaningActions: [],
+    dataConflicts: [],
+    collectionRuns: [],
+    history: [],
+    comparison: null,
     rbacMatrix: null,
     taskEvents: [],
     selectedFinding: null,
+    selectedAsset: "",
     filters: { tool_id: "", domain: "", severity: "", status: "", namespace: "", kind: "", name: "", keyword: "" },
     rbacFilters: { subject: "", resource: "", verb: "", scope: "", dangerous_only: true },
   };
 
   var $ = function (id) { return document.getElementById(id); };
   var api = function (path) { return fetch(path).then(function (res) { if (!res.ok) throw new Error(path + " " + res.status); return res.json(); }); };
+  var listItems = function (payload) { return Array.isArray(payload) ? payload : (payload && (payload.items || payload.results || payload.data)) || []; };
+  var apiList = function (path) { return api(path).then(listItems).catch(function () { return []; }); };
   var text = function (value, fallback) { return value === undefined || value === null || value === "" ? (fallback || "--") : String(value); };
   var safeJson = function (value, fallback) {
     if (!value) return fallback;
     if (typeof value !== "string") return value;
     try { return JSON.parse(value); } catch (_) { return fallback; }
   };
+  var redactEvidence = function (value, key) {
+    var lowered = String(key || "").toLowerCase().replace(/[-.]/g, "_");
+    var sensitiveKey = /password|passwd|secret|token|credential|private_key|client_key|api_key|access_key|encryption_key|stringdata|raw_snippet/.test(lowered);
+    if (sensitiveKey && value !== null && value !== undefined && value !== "") return "[已脱敏]";
+    if (typeof value === "string" && /BEGIN [A-Z ]*PRIVATE KEY|bearer\s+[a-z0-9._-]+/i.test(value)) return "[已脱敏]";
+    if (Array.isArray(value)) return value.map(function (item) { return redactEvidence(item, key); });
+    if (value && typeof value === "object") {
+      return Object.keys(value).reduce(function (result, itemKey) {
+        result[itemKey] = redactEvidence(value[itemKey], itemKey);
+        return result;
+      }, {});
+    }
+    return value;
+  };
+
   var assetOf = function (finding) {
     var asset = safeJson(finding.asset_json, finding.asset || null);
     if (!asset) return { label: "_cluster", namespace: "", kind: "" };
@@ -149,7 +173,20 @@
       state.rbacMatrix = data.rbac_matrix || null;
       state.taskEvents = data.task_events || [];
       if (state.report && state.report.findings && !state.findings.length) state.findings = state.report.findings;
-      renderAll();
+      return Promise.all([
+        apiList("/api/field-mappings" + query),
+        apiList("/api/cleaning-actions" + query),
+        apiList("/api/data-conflicts" + query),
+        apiList("/api/collection-runs" + query),
+        apiList("/api/history"),
+      ]).then(function (lists) {
+        state.fieldMappings = lists[0];
+        state.cleaningActions = lists[1];
+        state.dataConflicts = lists[2];
+        state.collectionRuns = lists[3];
+        state.history = lists[4];
+        renderAll();
+      });
     });
   }
 
@@ -207,6 +244,8 @@
     renderStructured();
     renderAuthn();
     renderEtcd();
+    renderComparison();
+    renderHistory();
   }
 
 
@@ -461,31 +500,40 @@
 
   function renderObservability() {
     var assets = observabilityAssets();
+    var visible = state.selectedAsset ? assets.filter(function (asset) { return asset.label === state.selectedAsset; }) : assets;
     var riskyAssets = assets.filter(function (asset) { return asset.level === "risk" || asset.level === "warn"; });
     var namespaces = Array.from(new Set(assets.map(function (asset) { return asset.namespace; })));
     $("observabilityAssetCount").textContent = text(assets.length, "0");
     $("observabilityStats").innerHTML = [
-      statCard("关联资源", assets.length, "与当前问题相关的资源", "blue"),
+      statCard("关联资源", assets.length, "与当前问题关联的资源", "blue"),
       statCard("需要关注", riskyAssets.length, "存在失败或警告", "orange"),
       statCard("资源范围", namespaces.length, "涉及命名空间", "green"),
-      statCard("链路数据", "待接入", "OpenTelemetry / Jaeger / SkyWalking", "purple"),
+      statCard("请求观测", "UNKNOWN", "当前任务未提供请求观测数据", "purple"),
     ].join("");
-    var entry = assets.filter(function (asset) { return /Service|Ingress|Gateway|API/i.test(asset.kind); });
-    var services = assets.filter(function (asset) { return /Deployment|StatefulSet|DaemonSet|Pod/i.test(asset.kind); });
-    var data = assets.filter(function (asset) { return entry.indexOf(asset) < 0 && services.indexOf(asset) < 0; });
-    $("serviceTopology").innerHTML = '<p class="topology-note">仅显示与当前问题关联的资源（共 ' + escapeHtml(assets.length) + ' 条），按资源类型分组；分组之间不是实际调用关系。</p><div class="topology-lanes">' +
+    var entry = visible.filter(function (asset) { return /Service|Ingress|Gateway|API/i.test(asset.kind); });
+    var services = visible.filter(function (asset) { return /Deployment|StatefulSet|DaemonSet|Pod/i.test(asset.kind); });
+    var data = visible.filter(function (asset) { return entry.indexOf(asset) < 0 && services.indexOf(asset) < 0; });
+    var graphNodes = visible.map(function (asset) { return { id: asset.label, name: asset.name || asset.label, kind: resourceKindLabel(asset.kind), namespace: asset.namespace }; });
+    $("serviceTopology").innerHTML = '<p class="topology-note">仅显示与当前问题关联的资源（共 ' + escapeHtml(visible.length) + ' 条），按稳定层级分组；分组之间不代表请求关系。</p><div class="topology-lanes">' +
       topologyLane("访问入口", entry, "暂未识别服务入口") +
       '<div class="topology-connector" aria-hidden="true"></div>' +
       topologyLane("运行服务", services, "暂未识别运行服务") +
       '<div class="topology-connector" aria-hidden="true"></div>' +
       topologyLane("配置与存储", data, "暂未识别配置或存储") +
-      '</div>';
-      $("traceWaterfall").innerHTML = '<div class="trace-empty"><div class="trace-skeleton"><i></i><i></i><i></i></div><h3>还没有调用链数据</h3><p>当前任务包含配置、权限和安全检查结果，但尚未接入请求链路数据，因此暂时无法展示耗时、错误传播或真实调用关系。</p><a class="ghost-button" href="#findings">查看风险问题</a></div>';
+      '</div><div class="graph-svg">' + graphSvg("serviceTopology", graphNodes, [], state.selectedAsset) + '</div>';
+    $("traceWaterfall").innerHTML = '<div class="trace-empty"><div class="trace-skeleton"><i></i><i></i><i></i></div><h3>暂无请求观测数据</h3><p>当前任务包含配置、权限和安全检查结果，但尚未提供请求观测数据，因此不展示耗时或错误传播。</p><a class="ghost-button" href="#findings">查看风险问题</a></div>';
     $("assetOverview").innerHTML = assets.length ? assets.slice(0, 6).map(observabilityAssetCard).join("") : '<p class="empty">当前任务还没有可展示的资源。</p>';
+    $("assetNeighborhood").innerHTML = state.selectedAsset && visible.length ? '<h3>选中资源邻域</h3>' + visible[0].findings.map(function (finding) { return '<button class="related-finding" data-finding-id="' + escapeHtml(text(finding.id)) + '" type="button"><span class="pill ' + escapeHtml(text(finding.status).toLowerCase()) + '">' + escapeHtml(statusLabel(finding.status)) + '</span><strong>' + escapeHtml(findingTitle(finding)) + '</strong></button>'; }).join("") : '<p class="muted">选择资源或问题后查看邻域。</p>';
+    fillSelect("assetNeighborhoodFilter", assets.map(function (asset) { return asset.label; }), "全部资源");
+    $("assetNeighborhoodFilter").value = state.selectedAsset || "";
+    $("assetNeighborhoodFilter").onchange = function () { state.selectedAsset = this.value; renderObservability(); };
+    $("restoreAssetNeighborhood").onclick = function () { state.selectedAsset = ""; renderObservability(); };
+    document.querySelectorAll("#serviceTopology .graph-node").forEach(function (node) { node.onclick = function () { state.selectedAsset = node.dataset.assetKey || ""; renderObservability(); }; });
+    document.querySelectorAll("#assetNeighborhood .related-finding").forEach(function (button) { button.onclick = function () { var finding = state.findings.find(function (item) { return text(item.id) === button.dataset.findingId; }); if (finding) { state.selectedFinding = finding; setRoute("findings"); renderFindingDetail(); } }; });
     var matrix = state.rbacMatrix || {};
     var matrixSummary = matrix.summary || {};
     var dangerous = matrix.dangerous_rows || [];
-    $("policyOverview").innerHTML = matrixSummary.matrix_row_count ? '<div class="policy-kpis"><div><span>权限主体</span><strong>' + escapeHtml(text(matrixSummary.subject_count, "0")) + '</strong></div><div><span>权限关系</span><strong>' + escapeHtml(text(matrixSummary.matrix_row_count, "0")) + '</strong></div><div><span>需要关注</span><strong class="danger-number">' + escapeHtml(text(matrixSummary.dangerous_row_count, "0")) + '</strong></div></div><div class="policy-list">' + dangerous.slice(0, 4).map(function (row) { return '<div><strong>' + escapeHtml(text(row.subject)) + '</strong><span>' + escapeHtml(text(row.scope, "集群范围")) + '</span><b>' + escapeHtml((row.danger_reasons || []).join("、") || "权限范围较大") + '</b></div>'; }).join("") + '</div>' : '<div class="trace-empty compact"><h3>暂未生成权限摘要</h3><p>完成一次云原生评估后，这里会显示需要关注的权限关系。</p></div>';
+    $("policyOverview").innerHTML = matrixSummary.matrix_row_count ? '<div class="policy-kpis"><div><span>权限主体</span><strong>' + escapeHtml(text(matrixSummary.subject_count, "0")) + '</strong></div><div><span>权限关系</span><strong>' + escapeHtml(text(matrixSummary.matrix_row_count, "0")) + '</strong></div><div><span>需要关注</span><strong class="danger-number">' + escapeHtml(text(matrixSummary.dangerous_row_count, "0")) + '</strong></div></div><div class="policy-list">' + dangerous.slice(0, 4).map(function (row) { return '<div><strong>' + escapeHtml(text(row.subject)) + '</strong><span>' + escapeHtml(text(row.scope, "集群范围")) + '</span><b>' + escapeHtml((row.danger_reasons || []).join("、") || "权限范围较大") + '</b></div>'; }).join("") + '</div>' : '<div class="trace-empty compact"><h3>暂无权限风险摘要</h3><p>当前任务没有可展示的权限矩阵证据。</p></div>';
   }
 
   function renderTargets() {
@@ -671,7 +719,7 @@
       '<h3>所属安全模块</h3><div class="asset-card"><strong>' + escapeHtml(info.module || "通用检查") + '</strong><span>三级模块：' + escapeHtml(info.name) + '</span></div>' +
       '<h3>风险分析</h3><p>' + escapeHtml(findingAnalysis(f)) + '</p>' +
       '<h3>影响对象</h3><div class="asset-card"><strong>' + escapeHtml(asset.name || "整个评估范围") + '</strong><span>' + escapeHtml(asset.namespace ? "资源范围：" + asset.namespace : "未限定具体资源范围") + '</span></div>' +
-      '<h3>发现依据</h3><details class="evidence-disclosure"><summary>查看原始技术证据</summary><pre>' + escapeHtml(JSON.stringify(evidence, null, 2)) + '</pre></details>' +
+      '<h3>发现依据</h3><button id="evidenceOpenBtn" class="evidence-open" type="button">在证据抽屉中查看</button>' +
       '<h3>建议处理</h3><p id="remediationText">' + escapeHtml(text(f.remediation, "暂无处理建议")) + '</p>' +
       '<h3>同一对象的其他问题</h3><div class="related-findings">' + (related.length ? related.map(function (item) {
         return '<button class="related-finding" data-finding-id="' + escapeHtml(text(item.id)) + '" type="button"><span class="pill ' + escapeHtml(text(item.status).toLowerCase()) + '">' + escapeHtml(statusLabel(item.status)) + '</span><strong>' + escapeHtml(findingTitle(item)) + '</strong></button>';
@@ -686,6 +734,7 @@
         }
       });
     });
+    $("evidenceOpenBtn").addEventListener("click", function () { openEvidenceDrawer(findingTitle(f), evidence); });
   }
 
   function relatedFindings(finding) {
@@ -703,6 +752,25 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(value).catch(function () {});
     }
+  }
+  function openEvidenceDrawer(title, evidence) {
+    var drawer = $("evidenceDrawer");
+    if (!drawer) return;
+    $("evidenceDrawerTitle").textContent = text(title, "技术证据");
+    $("evidenceDrawerBody").textContent = JSON.stringify(redactEvidence(evidence, "evidence"), null, 2);
+    drawer.hidden = false;
+    $("evidenceDrawerClose").focus();
+  }
+
+  function closeEvidenceDrawer() {
+    var drawer = $("evidenceDrawer");
+    if (drawer) drawer.hidden = true;
+  }
+
+  function bindEvidenceDrawer() {
+    var close = $("evidenceDrawerClose");
+    if (close) close.onclick = closeEvidenceDrawer;
+    document.querySelectorAll("[data-evidence-close]").forEach(function (element) { element.onclick = closeEvidenceDrawer; });
   }
 
   function renderStubs() {
@@ -827,51 +895,109 @@
     return escapeHtml(text(value));
   }
 
+  function graphSvg(id, nodes, edges, selectedId) {
+    var width = 680;
+    var safeNodes = (nodes || []).map(function (node, index) {
+      var key = String(node.id || node.node_id || node.key || node.name || index);
+      return { key: key, label: node.name || node.label || key, kind: node.kind || node.node_type || "资源", index: index };
+    });
+    var columns = Math.max(1, Math.min(4, safeNodes.length || 1));
+    var height = Math.max(150, Math.ceil(safeNodes.length / columns) * 86 + 42);
+    var positions = {};
+    safeNodes.forEach(function (node, index) {
+      positions[node.key] = { x: 90 + (index % columns) * 165, y: 38 + Math.floor(index / columns) * 86 };
+    });
+    var lines = (edges || []).map(function (edge) {
+      var source = String(edge.source || edge.source_node || "");
+      var target = String(edge.target || edge.target_node || "");
+      if (!positions[source] || !positions[target]) return "";
+      return '<line class="graph-edge" x1="' + positions[source].x + '" y1="' + positions[source].y + '" x2="' + positions[target].x + '" y2="' + positions[target].y + '"></line>';
+    }).join("");
+    var circles = safeNodes.map(function (node) {
+      var position = positions[node.key];
+      var selected = selectedId && selectedId === node.key ? " selected" : "";
+      return '<g class="graph-node' + selected + '" data-asset-key="' + escapeHtml(node.key) + '" transform="translate(' + position.x + ' ' + position.y + ')"><rect x="-70" y="-23" width="140" height="46" rx="3"></rect><text class="graph-kind" x="0" y="-5" text-anchor="middle">' + escapeHtml(node.kind) + '</text><text x="0" y="12" text-anchor="middle">' + escapeHtml(String(node.label).slice(0, 22)) + '</text></g>';
+    }).join("");
+    return '<svg class="stable-graph" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="结构化关系图"><g>' + lines + circles + '</g></svg>';
+  }
+
   function renderStructured() {
     var structured = state.structured || {};
     var run = structured.processing_run || {};
     var steps = structured.processing_steps || [];
     var quality = structured.data_quality_results || [];
     var lineage = structured.lineage || {};
+    var collections = state.collectionRuns.length ? state.collectionRuns : (structured.collection_runs || []);
+    var mappings = state.fieldMappings;
+    var cleaning = state.cleaningActions.length ? state.cleaningActions : (structured.cleaning_actions || []);
+    var conflicts = state.dataConflicts.length ? state.dataConflicts : (structured.data_conflicts || []);
+    var assets = structured.asset_graph || {};
     $("structuredStepCount").textContent = cell(steps.length);
     $("structuredStats").innerHTML = [
-      statCard("数据来源", (structured.sources || []).length, "本次任务记录的适配器来源", "blue"),
-      statCard("采集运行", (structured.collection_runs || []).length, "每个来源独立保留状态", "green"),
-      statCard("血缘节点", (lineage.nodes || []).length, "可从风险反向追溯", "purple"),
-      statCard("流水线状态", run.status, "中间步骤失败会保留部分结果", run.status === "SUCCESS" ? "green" : "orange"),
+      statCard("数据来源", (structured.sources || []).length, "持久化来源描述", "blue"),
+      statCard("采集运行", collections.length, "每个来源独立保留状态", "green"),
+      statCard("映射 / 清洗", mappings.length + cleaning.length, "规则和动作记录", "purple"),
+      statCard("流水线状态", run.status, "中间步骤失败仍保留结果", run.status === "SUCCESS" ? "green" : "orange"),
     ].join("");
+    $("structuredSources").innerHTML = (structured.sources || []).map(function (item) {
+      return "<tr><td>" + cell(item.name || item.source_id) + "</td><td>" + cell(item.source_type) + "</td><td>" + cell(item.connection_mode || item.metadata && item.metadata.mode) + "</td><td>" + cell(item.version || item.schema_version) + "</td></tr>";
+    }).join("") || '<tr><td colspan="4" class="empty">当前任务没有来源证据</td></tr>';
+    $("structuredCollections").innerHTML = collections.map(function (item) {
+      return "<tr><td><code>" + cell(item.run_id || item.id) + "</code></td><td>" + cell(item.source_id) + "</td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell(item.object_count || item.output_count || 0) + "</td><td>" + cell(item.warning_count || (item.warnings || []).length) + "</td><td>" + cell(item.error_count || (item.errors || []).length) + "</td></tr>";
+    }).join("") || '<tr><td colspan="6" class="empty">当前任务没有采集运行记录</td></tr>';
     $("structuredSteps").innerHTML = steps.map(function (step) {
-      return "<tr><td>" + cell(step.step_name) + "</td><td><span class=\"pill " + cell(String(step.status || "").toLowerCase()) + "\">" + cell(step.status) + "</span></td><td>" + cell(step.input_count) + "</td><td>" + cell(step.output_count) + "</td><td>" + cell(step.drop_count) + "</td><td>" + cell((step.warnings || []).length) + "</td><td>" + cell((step.errors || []).length) + "</td><td>" + cell(step.duration_ms) + " ms</td></tr>";
-    }).join("") || '<tr><td colspan="8" class="empty">当前任务没有处理步骤记录</td></tr>';
+      return "<tr><td>" + cell(step.step_name || step.step_type) + "</td><td><span class=\"pill " + cell(String(step.status || "").toLowerCase()) + "\">" + cell(step.status) + "</span></td><td>" + cell(step.input_count) + "</td><td>" + cell(step.output_count) + "</td><td>" + cell(step.drop_count) + "</td><td>" + cell((step.warnings || []).length || step.warning_count) + "</td><td>" + cell((step.errors || []).length || step.error_count) + "</td><td>" + cell(step.duration_ms) + " ms</td><td><code>" + cell(JSON.stringify(step.summary || {})) + "</code></td></tr>";
+    }).join("") || '<tr><td colspan="9" class="empty">当前任务没有处理步骤记录</td></tr>';
+    $("structuredMappings").innerHTML = mappings.map(function (item) {
+      return "<tr><td>" + cell(item.source_schema) + "</td><td><code>" + cell(item.source_path) + "</code></td><td><code>" + cell(item.target_path) + "</code></td><td>" + cell(item.transform) + "</td><td>" + cell(item.required) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">暂无字段映射记录</td></tr>';
+    $("structuredCleaning").innerHTML = cleaning.map(function (item) {
+      return "<tr><td>" + cell(item.object_key) + "</td><td>" + cell(item.field_path) + "</td><td>" + cell(item.action_type || item.action) + "</td><td>" + cell(JSON.stringify(item.before_value)) + "</td><td>" + cell(JSON.stringify(item.after_value)) + "</td><td>" + cell(item.reason) + "</td></tr>";
+    }).join("") || '<tr><td colspan="6" class="empty">暂无清洗动作记录</td></tr>';
+    $("structuredConflicts").innerHTML = conflicts.map(function (item) {
+      return "<tr><td>" + cell(item.object_key) + "</td><td>" + cell(item.field_path) + "</td><td>" + cell(JSON.stringify(item.candidate_values || item.candidates || [])) + "</td><td>" + cell(item.selected_source) + "</td><td>" + cell(item.resolution_reason) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">暂无数据冲突记录</td></tr>';
     $("structuredQuality").innerHTML = quality.map(function (item) {
       return "<tr><td>" + cell(item.rule_id) + "</td><td>" + cell(item.dimension) + "</td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell(item.score) + "</td><td>" + cell(item.failed_count) + "</td></tr>";
     }).join("") || '<tr><td colspan="5" class="empty">暂无数据质量规则结果</td></tr>';
-    $("structuredLineage").innerHTML = [
-      ["节点", (lineage.nodes || []).length],
-      ["关系", (lineage.edges || []).length],
-      ["可追溯对象", (structured.asset_graph && structured.asset_graph.nodes || []).length],
-    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    $("structuredLineage").innerHTML = [["节点", (lineage.nodes || []).length], ["关系", (lineage.edges || []).length], ["可追溯对象", (assets.nodes || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    $("lineageSvg").innerHTML = graphSvg("lineageSvg", lineage.nodes || [], lineage.edges || [], "");
+    var assetKinds = Array.from(new Set((assets.nodes || []).map(function (node) { return node.kind || node.node_type; }).filter(Boolean))).sort();
+    fillSelect("assetGraphKind", assetKinds, "全部资产类型");
+    var assetKind = $("assetGraphKind").value;
+    var assetKeyword = ($("assetGraphKeyword").value || "").toLowerCase();
+    var graphNodes = (assets.nodes || []).filter(function (node) { return (!assetKind || (node.kind || node.node_type) === assetKind) && (!assetKeyword || JSON.stringify(node).toLowerCase().indexOf(assetKeyword) >= 0); });
+    $("assetGraphSvg").innerHTML = graphSvg("assetGraphSvg", graphNodes, assets.edges || [], state.selectedAsset);
+    $("assetGraphKind").onchange = renderStructured;
+    $("assetGraphKeyword").oninput = renderStructured;
+    $("assetGraphReset").onclick = function () { $("assetGraphKind").value = ""; $("assetGraphKeyword").value = ""; renderStructured(); };
+    document.querySelectorAll("#assetGraphSvg .graph-node").forEach(function (node) { node.onclick = function () { state.selectedAsset = node.dataset.assetKey || ""; renderStructured(); }; });
   }
 
   function renderAuthn() {
     var structured = state.structured || {};
     var profile = structured.authentication || {};
     $("authnProfile").innerHTML = [
-      ["匿名认证", profile.anonymous_auth === true ? "开启" : profile.anonymous_auth === false ? "关闭" : "未知"],
+      ["匿名认证", profile.anonymous_auth === true ? "开启" : profile.anonymous_auth === false ? "关闭" : "UNKNOWN"],
       ["匿名授权", profile.anonymous_authorization],
-      ["OIDC", profile.oidc ? "已配置" : "未发现/未知"],
-      ["认证回调", profile.webhook ? "已配置" : "未发现/未知"],
-      ["前置代理", profile.front_proxy ? "已配置" : "未发现/未知"],
-      ["画像状态", profile.status],
-    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+      ["OIDC", profile.oidc || profile.oidc_config || "UNKNOWN"],
+      ["前置代理", profile.front_proxy || profile.proxy || "UNKNOWN"],
+      ["认证回调", profile.webhook || "UNKNOWN"],
+      ["身份状态", profile.status || "UNKNOWN"],
+    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(typeof item[1] === "object" ? JSON.stringify(item[1]) : item[1]) + "</strong></div>"; }).join("");
     var tokens = structured.service_account_tokens || [];
     $("authnTokens").innerHTML = tokens.map(function (item) {
       return "<tr><td>" + cell(item.workload) + "</td><td>" + cell(item.service_account) + "</td><td>" + cell(item.effective_automount) + "</td><td>" + cell(item.projected_token) + "</td><td>" + cell(item.expiration_seconds) + "</td><td>" + cell(item.audience) + "</td><td>" + cell(item.status) + "</td></tr>";
-    }).join("") || '<tr><td colspan="7" class="empty">没有足够的工作负载证据</td></tr>';
+    }).join("") || '<tr><td colspan="7" class="empty">没有足够的服务账号令牌证据</td></tr>';
     var identities = structured.identities || [];
     $("authnIdentities").innerHTML = identities.map(function (item) {
       return "<tr><td>" + cell(item.subject) + "</td><td>" + cell(item.subject_kind) + "</td><td>" + cell((item.roles || []).join(", ")) + "</td><td>" + cell(item.dangerous) + "</td><td>" + cell(item.status) + "</td></tr>";
     }).join("") || '<tr><td colspan="5" class="empty">没有身份主体证据</td></tr>';
+    $("authnCertificates").innerHTML = (structured.certificates || []).map(function (item) {
+      return "<tr><td>" + cell(item.source) + "</td><td>" + cell(item.subject) + "</td><td>" + cell(item.issuer) + "</td><td>" + cell(item.not_before) + " ~ " + cell(item.not_after) + "</td><td>" + cell(item.status || "UNKNOWN") + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">没有证书证据</td></tr>';
+    var mtls = (structured.mtls || [])[0] || {};
+    $("authnMtls").innerHTML = [["覆盖状态", mtls.status || "UNKNOWN"], ["工作负载", mtls.workload_count], ["严格模式", mtls.covered_count], ["未知原因", (mtls.unknown_reasons || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
   }
 
   function renderEtcd() {
@@ -882,21 +1008,17 @@
       var peer = item.peer || {};
       return "<tr><td>" + cell(item.source || item.node_name) + "</td><td>" + cell((client.urls || []).map(function (x) { return x.endpoint || x; }).join(", ")) + "</td><td>" + cell((peer.urls || []).map(function (x) { return x.endpoint || x; }).join(", ")) + "</td><td>" + cell(client.client_cert_auth) + "</td><td>" + cell(peer.client_cert_auth) + "</td><td>" + cell(item.status) + "</td></tr>";
     }).join("") || '<tr><td colspan="6" class="empty">当前任务没有 etcd 控制面证据</td></tr>';
+    $("etcdApiServer").innerHTML = (structured.apiserver_etcd || []).map(function (item) {
+      return "<tr><td>" + cell(item.server_name || item.source) + "</td><td>" + cell((item.endpoints || item.urls || []).map(function (x) { return x.endpoint || x; }).join(", ")) + "</td><td>" + cell(item.ca_file) + "</td><td>" + cell(item.cert_file) + "</td><td>" + cell(item.status || "UNKNOWN") + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">没有 API server → etcd 证据</td></tr>';
     var encryption = structured.encryption || [];
     var first = encryption[0] || {};
-    $("etcdEncryption").innerHTML = [
-      ["配置条目", first.rules ? first.rules.length : encryption.length],
-      ["状态", first.status || "UNKNOWN"],
-      ["提供器顺序", (first.provider_order || []).join(" → ")],
-      ["密钥名称数量", (first.key_names || []).length],
-    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    var kmsCount = (first.kms_providers || first.kms || []).length;
+    $("etcdEncryption").innerHTML = [["配置条目", first.rules ? first.rules.length : encryption.length], ["状态", first.status || "UNKNOWN"], ["提供器顺序", (first.provider_order || []).join(" → ")], ["KMS 提供器", kmsCount], ["密钥名称数量", (first.key_names || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    var consistency = structured.config_consistency || {};
+    $("etcdConsistency").innerHTML = [["状态", consistency.status || "UNKNOWN"], ["节点数", consistency.node_count], ["问题数", (consistency.issues || []).length], ["比较字段", (consistency.compared_fields || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
     var mtls = (structured.mtls || [])[0] || {};
-    $("etcdMtls").innerHTML = [
-      ["覆盖状态", mtls.status || "UNKNOWN"],
-      ["工作负载", mtls.workload_count],
-      ["严格模式", mtls.covered_count],
-      ["未知原因", (mtls.unknown_reasons || []).length],
-    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    $("etcdMtls").innerHTML = [["覆盖状态", mtls.status || "UNKNOWN"], ["工作负载", mtls.workload_count], ["严格模式", mtls.covered_count], ["未知原因", (mtls.unknown_reasons || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
   }
 
   function renderReport() {
@@ -905,6 +1027,37 @@
     $("markdownLink").href = "/api/reports/" + task + ".md";
     $("htmlLink").href = "/api/reports/" + task + ".html";
     $("reportPreview").textContent = state.report ? JSON.stringify(state.report, null, 2).slice(0, 30000) : "暂无报告";
+  }
+  function renderComparison() {
+    var options = state.tasks.map(function (task) { return '<option value="' + escapeHtml(task.id) + '">' + escapeHtml(task.id) + '</option>'; }).join("");
+    if ($("compareBase")) $("compareBase").innerHTML = options || '<option value="">暂无任务</option>';
+    if ($("compareCurrent")) $("compareCurrent").innerHTML = options || '<option value="">暂无任务</option>';
+    if (state.taskId && $("compareCurrent")) $("compareCurrent").value = state.taskId;
+    if (state.comparison && $("compareResult")) $("compareResult").textContent = JSON.stringify(state.comparison, null, 2);
+  }
+  function renderHistory() {
+    var container = $("historyTrend");
+    if (!container) return;
+    var rows = state.history || [];
+    container.innerHTML = rows.length ? rows.map(function (item) {
+      return '<div class="history-row"><strong>' + cell(item.task_id) + '</strong><span>得分 ' + cell(item.overall_score) + '</span><span>风险 ' + cell(item.finding_total) + '</span><span>高风险 ' + cell(item.high_risk_count) + '</span><span>证据 ' + cell(item.evidence_coverage) + '%</span><span>质量 ' + cell((item.data_quality || {}).completeness) + '</span><span>身份 ' + cell(item.identity_status) + '</span><span>etcd ' + cell(item.etcd_status) + '</span></div>';
+    }).join("") : '<p class="muted">暂无历史趋势数据</p>';
+  }
+
+  function compareTasks() {
+    var base = $("compareBase").value;
+    var current = $("compareCurrent").value;
+    if (!base || !current || base === current) {
+      $("compareResult").textContent = "请选择两个不同任务";
+      return;
+    }
+    $("compareResult").textContent = "正在读取比较结果…";
+    api("/api/assessments/compare?base=" + encodeURIComponent(base) + "&current=" + encodeURIComponent(current)).then(function (result) {
+      state.comparison = result;
+      $("compareResult").textContent = JSON.stringify(result, null, 2);
+    }).catch(function (error) {
+      $("compareResult").textContent = "比较结果读取失败：" + error.message;
+    });
   }
 
   function saveWeight(checkpointId) {
@@ -963,6 +1116,8 @@
       $(pair[0]).addEventListener("input", function () { state.filters[pair[1]] = this.value; state.selectedFinding = null; renderFindings(); });
       $(pair[0]).addEventListener("change", function () { state.filters[pair[1]] = this.value; state.selectedFinding = null; renderFindings(); });
     });
+    $("compareBtn").addEventListener("click", compareTasks);
+    bindEvidenceDrawer();
   }
 
   function init() {

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import AdapterRegistry, AdapterResult, AssessmentRequest, default_registry
+from .collection_executor import CollectionExecutionError, sanitize_error_message
 from .checkpoints import ASSESSMENT_CHECKPOINTS, CLOUD_NATIVE_CHECKPOINTS
 from .integration import build_integration_pipeline
 from .models import AssetRef, AssessmentReport, Evidence, Finding
@@ -250,10 +251,19 @@ class AssessmentOrchestrator:
         for adapter in self.registry.for_profile(request.profile):
             try:
                 result = adapter.evaluate(request)
+            except CollectionExecutionError as exc:
+                asset = AssetRef(kind="Adapter", name=adapter.tool_id)
+                error_finding = _finding(request.task_id, "INT-7", "INT-FRAME-001-adapter-error", f"{adapter.tool_id} adapter failed", "FAIL", "high", asset, Evidence("adapter 执行失败", asset, observed=exc.error_code, expected="successful adapter result"), "检查 adapter 参数、权限和网络。")
+                run_payload = exc.run.to_dict()
+                run_payload["task_id"] = request.task_id
+                run_payload["source_id"] = adapter.tool_id
+                adapter_results.append(AdapterResult(adapter.tool_id, [error_finding], {"source_id": adapter.tool_id, "error": exc.error_message, "error_code": exc.error_code, "stub_mode": False, "capabilities": list(getattr(adapter, "capabilities", ())), "collection_run": run_payload, "collection_attempts": [attempt.to_dict() for attempt in exc.attempts]}, [exc.error_message]))
+                findings.append(error_finding)
+                continue
             except Exception as exc:  # pragma: no cover - defensive integration behavior
                 asset = AssetRef(kind="Adapter", name=adapter.tool_id)
-                error_finding = _finding(request.task_id, "INT-7", "INT-FRAME-001-adapter-error", f"{adapter.tool_id} adapter failed", "FAIL", "high", asset, Evidence("adapter 执行失败", asset, observed=str(exc), expected="successful adapter result"), "检查 adapter 参数、权限和网络。")
-                adapter_results.append(AdapterResult(adapter.tool_id, [error_finding], {"error": str(exc)}, [str(exc)]))
+                error_finding = _finding(request.task_id, "INT-7", "INT-FRAME-001-adapter-error", f"{adapter.tool_id} adapter failed", "FAIL", "high", asset, Evidence("adapter 执行失败", asset, observed=sanitize_error_message(exc), expected="successful adapter result"), "检查 adapter 参数、权限和网络。")
+                adapter_results.append(AdapterResult(adapter.tool_id, [error_finding], {"source_id": adapter.tool_id, "error": sanitize_error_message(exc), "stub_mode": bool(getattr(adapter, "tool_id", "").endswith("_stub")), "capabilities": list(getattr(adapter, "capabilities", ()))}, [sanitize_error_message(exc)]))
                 findings.append(error_finding)
                 continue
             adapter_results.append(result)
@@ -279,8 +289,86 @@ class AssessmentOrchestrator:
             request, adapter_results, normalized, quality, adapter_health
         )
         structured = build_structured_payload(request.task_id, adapter_results, normalized, report, quality)
+        sources_by_id = {str(item.get("source_id")): item for item in structured.get("sources", []) if isinstance(item, dict)}
+        collection_runs = structured.get("collection_runs", []) or []
+        for adapter_result in adapter_results:
+            summary = adapter_result.raw_summary if isinstance(adapter_result.raw_summary, dict) else {}
+            source_id = str(summary.get("source_id") or adapter_result.tool_id)
+            source = sources_by_id.get(source_id)
+            if source is not None:
+                metadata = source.setdefault("metadata", {})
+                metadata.update({
+                    "mode": summary.get("mode"),
+                    "stub_mode": bool(summary.get("stub_mode")),
+                    "capabilities": list(summary.get("capabilities") or []),
+                })
+            run = summary.get("collection_run")
+            if not isinstance(run, dict) or not run.get("run_id"):
+                continue
+            run = dict(run)
+            run["task_id"] = request.task_id
+            run["source_id"] = source_id
+            run["source"] = source or {"source_id": source_id, "name": source_id}
+            run["attempts"] = list(summary.get("collection_attempts") or run.get("attempts") or [])
+            existing = next((index for index, item in enumerate(collection_runs) if isinstance(item, dict) and item.get("source", {}).get("source_id") == source_id), None)
+            if existing is None:
+                collection_runs.append(run)
+            else:
+                collection_runs[existing] = run
+        structured["collection_runs"] = collection_runs
         report.summary["structured"] = {
             "schema_version": structured.get("schema_version"),
             "module_counts": structured.get("module_counts", {}),
         }
+        report.summary["structured_analysis"] = self._structured_report_summary(structured)
         return OrchestratorResult(request, adapter_results, normalized, report, quality, adapter_health, structured)
+
+    @staticmethod
+    def _structured_report_summary(structured: dict[str, Any]) -> dict[str, Any]:
+        def statuses(items: Any) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for item in items if isinstance(items, list) else []:
+                if isinstance(item, dict):
+                    status = str(item.get("status", "UNKNOWN"))
+                else:
+                    status = "UNKNOWN"
+                counts[status] = counts.get(status, 0) + 1
+            return counts
+
+        authentication = structured.get("authentication") or {}
+        encryption = structured.get("encryption") or []
+        consistency = structured.get("config_consistency") or {}
+        return {
+            "schema_version": structured.get("schema_version"),
+            "module_counts": structured.get("module_counts", {}),
+            "processing_run": {
+                "status": (structured.get("processing_run") or {}).get("status", "UNKNOWN"),
+                "step_count": len(structured.get("processing_steps") or []),
+            },
+            "quality_summary": structured.get("quality_summary") or {},
+            "authentication": {
+                "status": authentication.get("status", "UNKNOWN") if isinstance(authentication, dict) else "UNKNOWN",
+                "anonymous_auth": authentication.get("anonymous_auth") if isinstance(authentication, dict) else None,
+                "anonymous_authorization": authentication.get("anonymous_authorization") if isinstance(authentication, dict) else "UNKNOWN",
+            },
+            "service_account_tokens": {
+                "count": len(structured.get("service_account_tokens") or []),
+                "status_count": statuses(structured.get("service_account_tokens")),
+            },
+            "certificates": {
+                "count": len(structured.get("certificates") or []),
+                "status_count": statuses(structured.get("certificates")),
+            },
+            "etcd": {
+                "count": len(structured.get("etcd") or []),
+                "status_count": statuses(structured.get("etcd")),
+            },
+            "encryption": {
+                "count": len(encryption) if isinstance(encryption, list) else 0,
+                "status_count": statuses(encryption),
+            },
+            "config_consistency": {
+                "status": consistency.get("status", "UNKNOWN") if isinstance(consistency, dict) else "UNKNOWN",
+                "issue_count": len(consistency.get("issues") or []) if isinstance(consistency, dict) else 0,
+            },
+        }

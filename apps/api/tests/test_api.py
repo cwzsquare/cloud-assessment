@@ -340,7 +340,7 @@ class ApiServerTest(unittest.TestCase):
         self.assertEqual(200, status)
         cn37_score = [item for item in report["checkpoint_scores"] if item["checkpoint_id"] == "CN-37"][0]
         self.assertEqual("PASS", cn37_score["status"])
-        self.assertEqual(2, cn37_score["finding_count"])
+        self.assertEqual(11, cn37_score["finding_count"])
         cn37_findings = [item for item in report["findings"] if item["checkpoint_id"] == "CN-37"]
         self.assertTrue(cn37_findings)
         self.assertTrue(all(item["asset"]["namespace"] == "cnsec-good" for item in cn37_findings))

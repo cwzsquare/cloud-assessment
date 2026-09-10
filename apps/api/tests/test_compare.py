@@ -38,3 +38,19 @@ def test_compare_tasks_accepts_nested_report_and_missing_optional_evidence() -> 
     assert result.quality_changes == []
     assert result.checkpoint_score_changes == []
     assert result.to_dict()["baseline_task_id"] == "old"
+
+
+def test_task_comparison_is_stable_and_persisted() -> None:
+    from tempfile import TemporaryDirectory
+
+    from cloudnative_security.storage import AssessmentStore
+
+    with TemporaryDirectory() as directory:
+        with AssessmentStore(f"{directory}/assessment.sqlite3") as store:
+            first = store.save_task_comparison("old", "new", {"added_findings": [{"fingerprint": "f3"}]})
+            second = store.save_task_comparison("old", "new", {"added_findings": [{"fingerprint": "f4"}]})
+            assert first["comparison_id"] == second["comparison_id"]
+            loaded = store.get_task_comparison(baseline_task_id="old", current_task_id="new")
+            assert loaded["added_findings"][0]["fingerprint"] == "f4"
+            assert len(store.list_task_comparisons()) == 1
+    assert result.to_dict()["baseline_task_id"] == "old"

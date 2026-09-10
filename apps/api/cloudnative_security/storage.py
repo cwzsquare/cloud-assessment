@@ -10,10 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoints import ASSESSMENT_CHECKPOINTS
+from .collection_executor import sanitize_error_message
 from .models import AssetRef, AssessmentReport, Checkpoint, Evidence, Finding
+from .structured_analysis import normalize_structured_payload
 from .report_renderer import write_markdown_report
-from .scoring import build_report
-
+from .scoring import (
+    _finding_is_applicable,
+    _rule_is_enabled,
+    build_report,
+    effective_findings_for_checkpoint,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -315,9 +321,27 @@ class AssessmentStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self._closed = False
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.init_schema()
+
+    def close(self) -> None:
+        """Close the SQLite connection; repeated calls are safe."""
+        with self.lock:
+            if self._closed:
+                return
+            try:
+                self.conn.commit()
+            finally:
+                self.conn.close()
+                self._closed = True
+
+    def __enter__(self) -> "AssessmentStore":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        self.close()
 
     def init_schema(self) -> None:
         with self.lock:
@@ -450,6 +474,8 @@ class AssessmentStore:
                             len(item.get("errors", []) or []), str(item.get("content_hash", "")),
                         ),
                     )
+                    for attempt in item.get("attempts", []) or []:
+                        self.save_collection_attempt(attempt, commit=False)
             processing = self._jsonable(payload.get("processing_run"))
             processing_id = str(processing.get("run_id") or processing.get("processing_run_id")) if isinstance(processing, dict) and (processing.get("run_id") or processing.get("processing_run_id")) else ""
             if isinstance(processing, dict) and processing_id:
@@ -665,6 +691,77 @@ class AssessmentStore:
                     self.conn.execute("INSERT INTO encryption_resource_rules(task_id, resource_key, rule_json) VALUES (?, ?, ?)", (task_id, resource_key, json.dumps(self._jsonable(rule), ensure_ascii=False, default=str)))
             elif category == "mtls":
                 self.conn.execute("INSERT INTO mtls_coverage_results(task_id, workload_key, result_json) VALUES (?, ?, ?)", (task_id, key, json.dumps(item, ensure_ascii=False, default=str)))
+    def save_collection_run(self, run: Any, task_id: str | None = None, *, commit: bool = True) -> None:
+        """Persist one collection run without storing collected payloads."""
+        item = self._jsonable(run)
+        if not isinstance(item, dict) or not item.get("run_id"):
+            raise ValueError("collection run requires run_id")
+        source = item.get("source") or {}
+        source_id = source.get("source_id") if isinstance(source, dict) else getattr(source, "source_id", None)
+        run_task_id = str(task_id or item.get("task_id") or "")
+        with self.lock:
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO collection_runs
+                (run_id, task_id, source_id, started_at, finished_at, status, object_count, byte_count, warning_count, error_count, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(item["run_id"]), run_task_id, str(item.get("source_id") or source_id or "unknown"),
+                    str(item.get("started_at") or ""), item.get("finished_at", item.get("completed_at")),
+                    str(item.get("status", "SUCCESS")), int(item.get("object_count", item.get("output_count", item.get("input_count", 0))) or 0),
+                    int(item.get("byte_count", 0) or 0), int(item.get("warning_count", len(item.get("warnings", []) or [])) or 0),
+                    int(item.get("error_count", len(item.get("errors", []) or [])) or 0), str(item.get("content_hash", "")),
+                ),
+            )
+            if commit:
+                self.conn.commit()
+
+    def save_collection_attempt(self, attempt: Any, *, commit: bool = True) -> None:
+        """Persist a single attempt, retaining only sanitized error metadata."""
+        item = self._jsonable(attempt)
+        if not isinstance(item, dict) or not item.get("run_id") or item.get("attempt") is None:
+            raise ValueError("collection attempt requires run_id and attempt")
+        with self.lock:
+            self.conn.execute(
+                """
+                INSERT INTO collection_attempts
+                (run_id, attempt, status, started_at, finished_at, error_code, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(item["run_id"]), int(item["attempt"]), str(item.get("status", "SUCCESS")),
+                    str(item.get("started_at") or ""), item.get("finished_at"),
+                    str(item["error_code"]) if item.get("error_code") else None,
+                    sanitize_error_message(item.get("error_message")) if item.get("error_message") else None,
+                ),
+            )
+            if commit:
+                self.conn.commit()
+
+    def list_collection_runs(self, task_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM collection_runs"
+        params: tuple[Any, ...] = ()
+        if task_id:
+            query += " WHERE task_id = ?"
+            params = (task_id,)
+        query += " ORDER BY started_at DESC"
+        with self.lock:
+            return [dict(row) for row in self.conn.execute(query, params).fetchall()]
+
+    def get_collection_run(self, run_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.conn.execute("SELECT * FROM collection_runs WHERE run_id = ?", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_collection_attempts(self, run_id: str) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT id, run_id, attempt, status, started_at, finished_at, error_code, error_message FROM collection_attempts WHERE run_id = ? ORDER BY attempt, id",
+                (run_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def list_processing_runs(self, task_id: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM processing_runs"
         params: tuple[Any, ...] = ()
@@ -722,7 +819,7 @@ class AssessmentStore:
                 "SELECT run_id, task_id, source_id, started_at, finished_at AS completed_at, status, object_count, byte_count, warning_count, error_count, content_hash FROM collection_runs WHERE task_id = ? ORDER BY started_at",
                 (task_id,),
             ).fetchall()
-            return {
+            return normalize_structured_payload({
                 "sources": [dict(row) for row in sources],
                 "collection_runs": [dict(row) for row in collections],
                 "processing_run": processing,
@@ -741,7 +838,140 @@ class AssessmentStore:
                 "config_consistency": json.loads(consistency[0]["result_json"]) if consistency else None,
                 "cleaning_actions": [dict(row) | {"before_value": json.loads(row["before_value"]), "after_value": json.loads(row["after_value"])} for row in cleaning],
                 "data_conflicts": [dict(row) | {"candidate_values": json.loads(row["candidate_values_json"])} for row in conflicts],
-            }
+            })
+    def list_field_mappings(self, **_: Any) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT mapping_id, source_schema, target_schema, source_path, target_path, transform, required, default_value_json FROM field_mapping_rules ORDER BY mapping_id"
+            ).fetchall()
+            return [
+                dict(row)
+                | {
+                    "required": bool(row["required"]),
+                    "default_value": json.loads(row["default_value_json"]) if row["default_value_json"] else None,
+                }
+                for row in rows
+            ]
+
+    def list_cleaning_actions(self, task_id: str | None = None, **_: Any) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM cleaning_actions" + (" WHERE task_id = ?" if task_id else "") + " ORDER BY id",
+                (task_id,) if task_id else (),
+            ).fetchall()
+            return [
+                dict(row)
+                | {
+                    "before_value": json.loads(row["before_value"]) if row["before_value"] else None,
+                    "after_value": json.loads(row["after_value"]) if row["after_value"] else None,
+                }
+                for row in rows
+            ]
+
+    def list_data_conflicts(self, task_id: str | None = None, **_: Any) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM data_conflicts" + (" WHERE task_id = ?" if task_id else "") + " ORDER BY conflict_id",
+                (task_id,) if task_id else (),
+            ).fetchall()
+            return [
+                dict(row)
+                | {"candidate_values": json.loads(row["candidate_values_json"])}
+                for row in rows
+            ]
+
+    def save_task_comparison(
+        self,
+        baseline_task_id: str,
+        current_task_id: str,
+        comparison: Any,
+        comparison_schema_version: str = "task-comparison/v1",
+    ) -> dict[str, Any]:
+        baseline = str(baseline_task_id)
+        current = str(current_task_id)
+        schema_version = str(comparison_schema_version)
+        comparison_id = hashlib.sha256(f"{baseline}:{current}:{schema_version}".encode()).hexdigest()
+        payload = comparison.to_dict() if hasattr(comparison, "to_dict") else self._jsonable(comparison)
+        if not isinstance(payload, dict):
+            payload = {"value": payload}
+        payload = dict(payload)
+        payload["comparison_id"] = comparison_id
+        payload["comparison_schema_version"] = schema_version
+        payload["baseline_task_id"] = baseline
+        payload["current_task_id"] = current
+        with self.lock:
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO task_comparisons
+                (comparison_id, baseline_task_id, current_task_id, comparison_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (comparison_id, baseline, current, json.dumps(payload, ensure_ascii=False, default=str)),
+            )
+            self.conn.commit()
+        return payload
+
+    def get_task_comparison(
+        self,
+        comparison_id: str | None = None,
+        baseline_task_id: str | None = None,
+        current_task_id: str | None = None,
+        comparison_schema_version: str = "task-comparison/v1",
+    ) -> dict[str, Any] | None:
+        if comparison_id is None and baseline_task_id is not None and current_task_id is not None:
+            comparison_id = hashlib.sha256(
+                f"{baseline_task_id}:{current_task_id}:{comparison_schema_version}".encode()
+            ).hexdigest()
+        if not comparison_id:
+            return None
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT comparison_json FROM task_comparisons WHERE comparison_id = ?",
+                (comparison_id,),
+            ).fetchone()
+            return json.loads(row["comparison_json"]) if row else None
+
+    def list_task_comparisons(self, **_: Any) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT comparison_json FROM task_comparisons ORDER BY created_at DESC, comparison_id"
+            ).fetchall()
+            return [json.loads(row["comparison_json"]) for row in rows]
+
+    def list_history(self, target_id: str | None = None, **_: Any) -> list[dict[str, Any]]:
+        tasks = self.list_tasks()
+        history: list[dict[str, Any]] = []
+        for task in tasks:
+            request = task.get("request") or {}
+            if target_id and str(request.get("target_id", "")) != str(target_id):
+                continue
+            report = self.get_report(str(task["id"])) or {}
+            summary = report.get("summary") or {}
+            structured = self.get_structured_payload(str(task["id"]))
+            quality = summary.get("data_quality") or structured.get("quality_summary") or {}
+            authn = structured.get("authentication") or {}
+            etcd = structured.get("etcd") or []
+            etcd_status = "UNKNOWN"
+            if etcd:
+                statuses = {str(item.get("status", "UNKNOWN")) for item in etcd if isinstance(item, dict)}
+                etcd_status = "FAIL" if "FAIL" in statuses else "WARN" if "WARN" in statuses else "PASS" if "PASS" in statuses else "UNKNOWN"
+            history.append(
+                {
+                    "task_id": task["id"],
+                    "target_id": request.get("target_id"),
+                    "created_at": task.get("created_at"),
+                    "completed_at": task.get("completed_at"),
+                    "overall_score": summary.get("overall_score"),
+                    "finding_total": summary.get("finding_total"),
+                    "high_risk_count": int(summary.get("critical_fail_count", 0) or 0) + int(summary.get("high_fail_count", 0) or 0),
+                    "evidence_coverage": summary.get("evidence_coverage"),
+                    "data_quality": quality,
+                    "identity_status": authn.get("status", "UNKNOWN") if isinstance(authn, dict) else "UNKNOWN",
+                    "etcd_status": etcd_status,
+                }
+            )
+        return history
+
     def list_source_descriptors(self) -> list[dict[str, Any]]:
         with self.lock:
             rows = self.conn.execute("SELECT * FROM source_descriptors ORDER BY source_id").fetchall()
@@ -983,6 +1213,9 @@ class AssessmentStore:
                 weight=float(item["weight"]),
                 dimensions=item["dimensions"],
                 data_sources=item["data_sources"],
+                enabled=bool(item.get("enabled", True)),
+                applicability=item.get("applicability") or {},
+                rule_enabled=item.get("rule_enabled") or {},
             )
             for item in self._enabled_checkpoint_items()
         ]
@@ -990,8 +1223,12 @@ class AssessmentStore:
     def build_dynamic_report(self, task_id: str, findings: list[Finding], base_summary: dict[str, Any] | None = None) -> AssessmentReport:
         checkpoint_items = self._enabled_checkpoint_items()
         filtered_findings, filter_summary = self._filter_findings_for_checkpoints(findings, checkpoint_items)
-        report = build_report(task_id, filtered_findings, self.scoring_checkpoints())
-        for key in ["data_quality", "tool_count", "tools", "tool_summary", "integration_pipeline"]:
+        # Pass the same metadata-bearing checkpoint records to scoring. This
+        # keeps report findings, checkpoint scores, and overall score aligned.
+        report = build_report(task_id, findings, checkpoint_items)
+        if len(report.findings) != len(filtered_findings):
+            raise RuntimeError("dynamic report filtering and scoring diverged")
+        for key in ["data_quality", "tool_count", "tools", "tool_summary", "integration_pipeline", "structured_analysis"]:
             if base_summary and key in base_summary:
                 report.summary[key] = base_summary[key]
         report.summary["dynamic_filter"] = filter_summary
@@ -1000,19 +1237,22 @@ class AssessmentStore:
     def _filter_findings_for_checkpoints(self, findings: list[Finding], checkpoint_items: list[dict[str, Any]]) -> tuple[list[Finding], dict[str, Any]]:
         checkpoint_by_id = {item["id"]: item for item in checkpoint_items}
         excluded = {"disabled_checkpoint": 0, "disabled_rule": 0, "not_applicable": 0}
-        filtered: list[Finding] = []
+        effective_by_id = {
+            item["id"]: effective_findings_for_checkpoint(item, findings)
+            for item in checkpoint_items
+        }
+        effective_ids = {id(finding) for values in effective_by_id.values() for finding in values}
+        filtered = [finding for finding in findings if id(finding) in effective_ids]
         for finding in findings:
+            if id(finding) in effective_ids:
+                continue
             checkpoint = checkpoint_by_id.get(finding.checkpoint_id)
             if not checkpoint:
                 excluded["disabled_checkpoint"] += 1
-                continue
-            if not self._rule_is_enabled(finding, checkpoint):
+            elif not self._rule_is_enabled(finding, checkpoint):
                 excluded["disabled_rule"] += 1
-                continue
-            if not self._finding_is_applicable(finding, checkpoint.get("applicability") or {}):
+            else:
                 excluded["not_applicable"] += 1
-                continue
-            filtered.append(finding)
         return filtered, {
             "raw_finding_total": len(findings),
             "included_finding_total": len(filtered),
@@ -1022,59 +1262,11 @@ class AssessmentStore:
 
     @staticmethod
     def _rule_is_enabled(finding: Finding, checkpoint: dict[str, Any]) -> bool:
-        rule_enabled = checkpoint.get("rule_enabled") or {}
-        if not isinstance(rule_enabled, dict):
-            return True
-        rule_id = finding.rule_id
-        if rule_id in rule_enabled:
-            return bool(rule_enabled[rule_id])
-        group = str(checkpoint.get("rule_group") or "")
-        if group and group in rule_enabled:
-            return bool(rule_enabled[group])
-        for key, enabled in rule_enabled.items():
-            key_str = str(key)
-            if key_str and rule_id.startswith(f"{key_str}-"):
-                return bool(enabled)
-        return True
+        return _rule_is_enabled(finding, checkpoint)
 
     @staticmethod
-    def _finding_is_applicable(finding: Finding, applicability: dict[str, Any]) -> bool:
-        scope = str(applicability.get("scope", "all")).lower()
-        if scope in {"disabled", "none", "not_applicable", "not-applicable", "n/a"}:
-            return False
-
-        asset = finding.asset
-        include_cluster_scoped = bool(applicability.get("include_cluster_scoped", True))
-        if not asset and not include_cluster_scoped:
-            return False
-        if asset and asset.namespace is None and not include_cluster_scoped:
-            return False
-
-        namespaces = applicability.get("namespaces")
-        if namespaces:
-            namespace_set = {str(item) for item in namespaces}
-            if asset and asset.namespace is not None and asset.namespace not in namespace_set:
-                return False
-
-        kinds = applicability.get("kinds")
-        if kinds:
-            kind_set = {str(item).lower() for item in kinds}
-            if not asset or asset.kind.lower() not in kind_set:
-                return False
-
-        tools = applicability.get("tools")
-        if tools and finding.tool_id not in {str(item) for item in tools}:
-            return False
-
-        statuses = applicability.get("statuses")
-        if statuses and finding.status not in {str(item) for item in statuses}:
-            return False
-
-        severities = applicability.get("severities")
-        if severities and finding.severity not in {str(item) for item in severities}:
-            return False
-
-        return True
+    def _finding_is_applicable(finding: Finding, applicability: dict[str, Any] | bool) -> bool:
+        return _finding_is_applicable(finding, applicability)
 
     def list_checkpoints(self) -> list[dict[str, Any]]:
         with self.lock:

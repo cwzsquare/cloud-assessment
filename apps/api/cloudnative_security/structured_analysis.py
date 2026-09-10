@@ -5,9 +5,42 @@ intermediate records for persistence, APIs, reports, and the dashboard.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
+
+@dataclass
+class PipelineContext:
+    """Mutable artifacts shared by the real 14-step processing pipeline.
+
+    The execution engine passes each step's output to the next step, while this
+    context keeps the differently shaped artifacts available to independent
+    later steps when an earlier callable fails.
+    """
+
+    task_id: str
+    objects: list[dict[str, Any]]
+    findings: list[Any]
+    report: Any
+    quality_summary: Any
+    rbac_rows: list[dict[str, Any]] = field(default_factory=list)
+    snapshots: list[dict[str, Any]] = field(default_factory=list)
+    sources: list[Any] = field(default_factory=list)
+    parsed_records: list[dict[str, Any]] | None = None
+    mapped_records: list[dict[str, Any]] | None = None
+    mapping_result: Any = None
+    cleaned_records: list[dict[str, Any]] | None = None
+    cleaning_result: Any = None
+    normalized_assets: list[dict[str, Any]] | None = None
+    resource_dedup: Any = None
+    evidence_rows: list[dict[str, Any]] | None = None
+    evidence_dedup: Any = None
+    asset_graph: Any = None
+    quality_results: list[Any] | None = None
+    aggregated_findings: list[Any] | None = None
+    checkpoint_scores: list[Any] | None = None
+    lineage: Any = None
+    persistence_outputs: list[str] | None = None
 
 from .asset_graph import build_asset_graph
 from .authn_analyzers import (
@@ -28,6 +61,57 @@ from .field_mapping import FieldMappingRule, apply_field_mappings
 from .mtls_coverage import analyze_mtls_coverage
 from .certificate_inspector import inspect_certificate
 
+CURRENT_STRUCTURED_SCHEMA_VERSION = "structured-assessment/v1"
+
+
+def normalize_structured_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Normalize current and legacy structured payloads to one read contract."""
+    if not isinstance(payload, Mapping):
+        return {}
+    normalized = dict(payload)
+    source_version = str(normalized.get("schema_version") or normalized.get("version") or "structured-assessment/legacy")
+    aliases = {
+        "processing": "processing_run",
+        "steps": "processing_steps",
+        "quality": "data_quality_results",
+        "mappings": "field_mapping_rules",
+        "cleaning": "cleaning_actions",
+        "conflicts": "data_conflicts",
+        "authn": "authentication",
+        "service_accounts": "service_account_tokens",
+        "asset_relationships": "asset_graph",
+    }
+    for legacy_key, current_key in aliases.items():
+        if current_key not in normalized and legacy_key in normalized:
+            normalized[current_key] = normalized[legacy_key]
+    defaults: dict[str, Any] = {
+        "sources": [],
+        "collection_runs": [],
+        "processing_steps": [],
+        "data_quality_results": [],
+        "field_mapping_rules": [],
+        "cleaning_actions": [],
+        "data_conflicts": [],
+        "lineage": {"nodes": [], "edges": []},
+        "asset_graph": {"nodes": [], "edges": []},
+        "service_account_tokens": [],
+        "identities": [],
+        "etcd": [],
+        "apiserver_etcd": [],
+        "encryption": [],
+        "certificates": [],
+        "mtls": [],
+    }
+    for key, default in defaults.items():
+        if normalized.get(key) is None:
+            normalized[key] = default.copy() if isinstance(default, dict) else list(default)
+    normalized["schema_version"] = CURRENT_STRUCTURED_SCHEMA_VERSION
+    normalized["compatibility"] = {
+        "source_schema_version": source_version,
+        "normalized_schema_version": CURRENT_STRUCTURED_SCHEMA_VERSION,
+        "legacy_aliases_applied": [key for key, value in aliases.items() if value in normalized and key in payload and value not in payload],
+    }
+    return normalized
 def _jsonable(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return value.to_dict()
@@ -38,6 +122,7 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [_jsonable(v) for v in value]
     return value
+
 
 
 def _objects(adapter_results: list[Any]) -> list[dict[str, Any]]:
@@ -70,43 +155,83 @@ def _assets(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "source": obj.get("source", "kubernetes-api"),
             })
     return rows
-
-
-def _normalize_evidence(objects: list[dict[str, Any]], findings: list[Any]) -> dict[str, Any]:
-    rules = [
+def _mapping_rules() -> list[FieldMappingRule]:
+    return [
         FieldMappingRule("MAP-KIND", "kubernetes", "normalized", "kind", "normalized.kind", required=True),
         FieldMappingRule("MAP-NAME", "kubernetes", "normalized", "metadata.name", "normalized.name", required=True),
         FieldMappingRule("MAP-NAMESPACE", "kubernetes", "normalized", "metadata.namespace", "normalized.namespace"),
     ]
-    mapped = apply_field_mappings(objects, rules)
-    cleaned = clean_records(
-        mapped.records,
-        CleaningConfig(name_fields=("name",), list_fields=("finalizers",), label_fields=("labels",)),
+
+
+def _objects_from(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, (list, tuple, set)):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
+def _normalization_from_context(context: PipelineContext, processing_run: Any) -> dict[str, Any]:
+    """Export the artifacts produced by the pipeline, including failed fallbacks."""
+    mapped_records = context.mapped_records if context.mapped_records is not None else (
+        context.parsed_records if context.parsed_records is not None else context.objects
     )
-    resources = deduplicate_resources(cleaned.records)
-    evidence_rows = [
-        {
-            "evidence_key": getattr(item, "fingerprint", None) or getattr(item, "id", None) or str(index),
-            "source": getattr(item, "tool_id", "assessment"),
-            "status": getattr(item, "status", "UNKNOWN"),
-            "severity": getattr(item, "severity", "UNKNOWN"),
-            "source_reference": getattr(item, "checkpoint_id", None),
+    cleaned_records = context.cleaned_records if context.cleaned_records is not None else mapped_records
+    normalized_assets = context.normalized_assets
+    if normalized_assets is None:
+        normalized_assets = _assets(cleaned_records)
+    mapping_result = context.mapping_result
+    if mapping_result is not None:
+        mapping_summary = mapping_result.to_dict()
+    else:
+        step = next((item for item in processing_run.steps if item.step_name == "field_mapping"), None)
+        mapping_summary = {
+            "records": mapped_records,
+            "required_failures": None,
+            "required_failure_paths": {},
+            "errors": list(getattr(step, "errors", []) or []),
+            "mapped_count": len(mapped_records),
         }
-        for index, item in enumerate(findings)
-    ]
-    evidence = deduplicate_evidence(evidence_rows)
+    cleaning_result = context.cleaning_result
+    if cleaning_result is not None:
+        cleaning_summary = cleaning_result.to_dict()
+        cleaning_actions = [item.to_dict() for item in cleaning_result.actions]
+    else:
+        step = next((item for item in processing_run.steps if item.step_name == "data_cleaning"), None)
+        cleaning_actions = []
+        cleaning_summary = {
+            "records": cleaned_records,
+            "actions": [],
+            "invalid_count": None,
+            "sensitive_skipped": None,
+            "errors": list(getattr(step, "errors", []) or []),
+        }
+    resource_dedup = context.resource_dedup
+    evidence_dedup = context.evidence_dedup
+    resource_duplicates = int(getattr(resource_dedup, "duplicate_count", 0) or 0)
+    evidence_duplicates = int(getattr(evidence_dedup, "duplicate_count", 0) or 0)
+    evidence_records = (
+        evidence_dedup.records if evidence_dedup is not None
+        else (context.evidence_rows if context.evidence_rows is not None else [])
+    )
+    conflicts = []
+    if resource_dedup is not None:
+        conflicts.extend(item.to_dict() for item in resource_dedup.conflicts)
+    if evidence_dedup is not None:
+        conflicts.extend(item.to_dict() for item in evidence_dedup.conflicts)
+    rules = _mapping_rules()
     return {
         "field_mapping_rules": [rule.to_dict() for rule in rules],
-        "mapped_records": mapped.records,
-        "mapping_summary": mapped.to_dict(),
-        "cleaning_actions": [item.to_dict() for item in cleaned.actions],
-        "cleaning_summary": cleaned.to_dict(),
-        "normalized_assets": resources.records,
-        "data_conflicts": [item.to_dict() for item in resources.conflicts + evidence.conflicts],
+        "mapped_records": mapped_records,
+        "mapping_summary": mapping_summary,
+        "cleaning_actions": cleaning_actions,
+        "cleaning_summary": cleaning_summary,
+        "normalized_assets": normalized_assets,
+        "data_conflicts": conflicts,
         "deduplication": {
-            "resource_duplicate_count": resources.duplicate_count,
-            "evidence_duplicate_count": evidence.duplicate_count,
-            "finding_count": len(evidence.records),
+            "resource_duplicate_count": resource_duplicates,
+            "evidence_duplicate_count": evidence_duplicates,
+            "finding_count": len(evidence_records),
         },
     }
 
@@ -123,69 +248,207 @@ def _quality(objects: list[dict[str, Any]], graph: Any) -> list[Any]:
     return evaluate_data_quality(objects, rules, references={"lineage": graph.to_dict() if hasattr(graph, "to_dict") else graph})
 
 
-def _pipeline(
-    objects: list[dict[str, Any]],
-    findings: list[Any],
-    quality: list[Any],
-    graph: Any,
-    asset_graph: Any,
-    report: Any,
-    normalization: dict[str, Any],
-) -> Any:
+def _pipeline(context: PipelineContext) -> Any:
     catalog = [
         "input_loading", "structure_parsing", "resource_normalization", "field_mapping",
         "data_cleaning", "fingerprint", "deduplication", "relationship_building",
         "data_quality", "security_rules", "finding_aggregation", "checkpoint_scoring",
         "report_building", "persistence",
     ]
-    metrics = {
-        "input_loading": (len(objects), len(objects), {"sources": len({str(x.get('source', 'kubernetes-api')) for x in objects})}),
-        "structure_parsing": (len(objects), len(objects), {"parse_errors": 0}),
-        "resource_normalization": (len(objects), len(normalization["normalized_assets"]), {"normalized_assets": len(normalization["normalized_assets"])}),
-        "field_mapping": (len(objects), len(normalization["mapped_records"]), {"mapped_fields": [x["mapping_id"] for x in normalization["field_mapping_rules"]], "required_failures": normalization["mapping_summary"]["required_failures"]}),
-        "data_cleaning": (len(objects), len(normalization["cleaning_summary"]["records"]), {"cleaning_actions": len(normalization["cleaning_actions"]), "invalid_count": normalization["cleaning_summary"]["invalid_count"]}),
-        "fingerprint": (len(findings), len(findings), {"fingerprints": len([x for x in findings if getattr(x, 'fingerprint', None)])}),
-        "deduplication": (len(findings), normalization["deduplication"]["finding_count"], {"deduplicated_findings": normalization["deduplication"]["finding_count"], "resource_duplicates": normalization["deduplication"]["resource_duplicate_count"], "evidence_duplicates": normalization["deduplication"]["evidence_duplicate_count"]}),
-        "relationship_building": (len(asset_graph.nodes), len(asset_graph.nodes), {"nodes": len(asset_graph.nodes), "edges": len(asset_graph.edges)}),
-        "data_quality": (len(objects), len(quality), {"rule_count": len(quality)}),
-        "security_rules": (len(objects), len(findings), {"finding_count": len(findings)}),
-        "finding_aggregation": (len(findings), len(findings), {"finding_count": len(findings)}),
-        "checkpoint_scoring": (len(getattr(report, "checkpoint_scores", []) or []), len(getattr(report, "checkpoint_scores", []) or []), {}),
-        "report_building": (1, 1, {"schema_version": getattr(report, "schema_version", "unknown")}),
-        "persistence": (1, 1, {"stored_outputs": ["raw_snapshots", "findings", "reports", "structured_payload"]}),
+
+    def input_loading(data: Any, ctx: PipelineContext) -> list[dict[str, Any]]:
+        records = _objects_from(data)
+        ctx.objects = records
+        return records
+
+    def structure_parsing(data: Any, ctx: PipelineContext) -> dict[str, Any]:
+        source = _objects_from(data)
+        parsed = [dict(record) for record in source]
+        ctx.parsed_records = parsed
+        return {"output": parsed, "summary": {"parsed_records": len(parsed), "parse_errors": len(source) - len(parsed)}}
+
+    def resource_normalization(data: Any, ctx: PipelineContext) -> list[dict[str, Any]]:
+        records = _objects_from(data)
+        # Preserve the source shape for field mapping; asset projections are
+        # materialized here and replaced with deduplicated projections later.
+        normalized = [dict(record) for record in records]
+        ctx.normalized_assets = _assets(normalized)
+        return {
+            "output": normalized,
+            "summary": {"normalized_records": len(normalized), "normalized_assets": len(ctx.normalized_assets)},
+        }
+
+    def field_mapping(data: Any, ctx: PipelineContext) -> dict[str, Any]:
+        result = apply_field_mappings(_objects_from(data), _mapping_rules())
+        ctx.mapping_result = result
+        ctx.mapped_records = result.records
+        return {
+            "output": result.records,
+            "summary": {
+                "mapped_fields": [rule.mapping_id for rule in _mapping_rules()],
+                "required_failures": result.required_failures,
+                "mapping_errors": len(result.errors),
+            },
+            "status": "PARTIAL" if result.required_failures or result.errors else "SUCCESS",
+        }
+
+    def data_cleaning(data: Any, ctx: PipelineContext) -> dict[str, Any]:
+        result = clean_records(
+            _objects_from(data),
+            CleaningConfig(name_fields=("name",), list_fields=("finalizers",), label_fields=("labels",)),
+        )
+        ctx.cleaning_result = result
+        ctx.cleaned_records = result.records
+        return {
+            "output": result.records,
+            "summary": {
+                "cleaning_actions": len(result.actions),
+                "invalid_count": result.invalid_count,
+                "sensitive_skipped": result.sensitive_skipped,
+            },
+            "status": "PARTIAL" if result.invalid_count else "SUCCESS",
+        }
+
+    def fingerprint(data: Any, ctx: PipelineContext) -> list[dict[str, Any]]:
+        rows = [
+            {
+                "evidence_key": getattr(item, "fingerprint", None) or getattr(item, "id", None) or str(index),
+                "source": getattr(item, "tool_id", "assessment"),
+                "status": getattr(item, "status", "UNKNOWN"),
+                "severity": getattr(item, "severity", "UNKNOWN"),
+                "source_reference": getattr(item, "checkpoint_id", None),
+            }
+            for index, item in enumerate(ctx.findings)
+        ]
+        ctx.evidence_rows = rows
+        return rows
+
+    def deduplication(data: Any, ctx: PipelineContext) -> list[dict[str, Any]]:
+        source_records = ctx.cleaned_records if ctx.cleaned_records is not None else _objects_from(data)
+        resource_result = deduplicate_resources(source_records)
+        evidence_result = deduplicate_evidence(ctx.evidence_rows or [])
+        ctx.resource_dedup = resource_result
+        ctx.evidence_dedup = evidence_result
+        ctx.normalized_assets = _assets(resource_result.records)
+        return {
+            "output": evidence_result.records,
+            "summary": {
+                "resource_duplicates": resource_result.duplicate_count,
+                "evidence_duplicates": evidence_result.duplicate_count,
+                "deduplicated_findings": len(evidence_result.records),
+            },
+        }
+
+    def relationship_building(data: Any, ctx: PipelineContext) -> list[Any]:
+        source_records = (
+            ctx.resource_dedup.records
+            if ctx.resource_dedup is not None
+            else (ctx.cleaned_records if ctx.cleaned_records is not None else ctx.objects)
+        )
+        ctx.asset_graph = build_asset_graph(source_records, ctx.rbac_rows)
+        return {
+            "output": ctx.asset_graph.nodes,
+            "summary": {"nodes": len(ctx.asset_graph.nodes), "edges": len(ctx.asset_graph.edges)},
+        }
+
+    def data_quality(data: Any, ctx: PipelineContext) -> list[Any]:
+        source_records = (
+            ctx.resource_dedup.records
+            if ctx.resource_dedup is not None
+            else (ctx.cleaned_records if ctx.cleaned_records is not None else ctx.objects)
+        )
+        ctx.quality_results = _quality(source_records, ctx.asset_graph)
+        return {
+            "output": ctx.quality_results,
+            "summary": {"rule_count": len(ctx.quality_results), "unknown_count": sum(item.status == "UNKNOWN" for item in ctx.quality_results)},
+        }
+
+    def security_rules(data: Any, ctx: PipelineContext) -> list[Any]:
+        # Rule evaluation is owned by the orchestrator; this step records the
+        # real finding stream rather than inventing a second evaluation.
+        return {"output": list(ctx.findings), "summary": {"finding_count": len(ctx.findings), "external": True}}
+
+    def finding_aggregation(data: Any, ctx: PipelineContext) -> list[Any]:
+        allowed = None
+        if ctx.evidence_dedup is not None:
+            allowed = {row.get("evidence_key") for row in ctx.evidence_dedup.records}
+        aggregated: list[Any] = []
+        seen: set[Any] = set()
+        for index, finding in enumerate(ctx.findings):
+            key = getattr(finding, "fingerprint", None) or getattr(finding, "id", None) or str(index)
+            if allowed is not None and key not in allowed:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            aggregated.append(finding)
+        ctx.aggregated_findings = aggregated
+        return {"output": aggregated, "summary": {"finding_count": len(aggregated), "deduplicated": len(ctx.findings) - len(aggregated)}}
+
+    def checkpoint_scoring(data: Any, ctx: PipelineContext) -> list[Any]:
+        ctx.checkpoint_scores = list(getattr(ctx.report, "checkpoint_scores", []) or [])
+        return {"output": ctx.checkpoint_scores, "summary": {"external": True, "score_count": len(ctx.checkpoint_scores)}}
+
+    def report_building(data: Any, ctx: PipelineContext) -> list[Any]:
+        return {"output": [ctx.report], "summary": {"schema_version": getattr(ctx.report, "schema_version", "unknown"), "external": True}}
+
+    def persistence(data: Any, ctx: PipelineContext) -> list[str]:
+        ctx.persistence_outputs = ["raw_snapshots", "findings", "reports", "structured_payload"]
+        return {"output": ctx.persistence_outputs, "summary": {"stored_outputs": ctx.persistence_outputs, "external": True}}
+
+    steps = {
+        "input_loading": input_loading,
+        "structure_parsing": structure_parsing,
+        "resource_normalization": resource_normalization,
+        "field_mapping": field_mapping,
+        "data_cleaning": data_cleaning,
+        "fingerprint": fingerprint,
+        "deduplication": deduplication,
+        "relationship_building": relationship_building,
+        "data_quality": data_quality,
+        "security_rules": security_rules,
+        "finding_aggregation": finding_aggregation,
+        "checkpoint_scoring": checkpoint_scoring,
+        "report_building": report_building,
+        "persistence": persistence,
     }
-
-    def make_step(name: str):
-        def run(data: Any, _context: Any = None) -> dict[str, Any]:
-            input_count, output_count, summary = metrics[name]
-            return {"output": data, "summary": summary, "drop_count": max(0, input_count - output_count)}
-        return run
-
-    pipeline = DataPipeline({name: make_step(name) for name in catalog}, catalog=catalog)
-    return pipeline.run(objects, context={"finding_count": len(findings)})
+    pipeline = DataPipeline(steps, catalog=catalog)
+    return pipeline.run(context.objects, context=context)
 
 
 def build_structured_payload(task_id: str, adapter_results: list[Any], findings: list[Any], report: Any, quality_summary: Any) -> dict[str, Any]:
     """Return all structured products generated from real adapter evidence."""
     objects = _objects(adapter_results)
     rbac_rows = _rbac_rows(adapter_results)
-    assets = _assets(objects)
-    normalization = _normalize_evidence(objects, findings)
     sources: list[SourceDescriptor] = []
     collections: list[CollectionRun] = []
     snapshots: list[dict[str, Any]] = []
     for result in adapter_results:
-        descriptor = SourceDescriptor(source_id=result.tool_id, source_type=result.raw_summary.get("kind", "adapter"), name=result.tool_id, version=result.raw_summary.get("schema_version"), metadata={"mode": result.raw_summary.get("mode"), "stub_mode": bool(result.raw_summary.get("stub_mode"))})
+        descriptor = SourceDescriptor(source_id=result.tool_id, source_type=result.raw_summary.get("kind", "adapter"), name=result.tool_id, version=result.raw_summary.get("schema_version"), metadata={"mode": result.raw_summary.get("mode"), "stub_mode": bool(result.raw_summary.get("stub_mode")), "capabilities": list(result.raw_summary.get("capabilities") or [])})
         sources.append(descriptor)
         run = CollectionRun(source=descriptor, status="PARTIAL" if result.warnings else "SUCCESS", input_count=int(result.raw_summary.get("object_count", 0) or 0), output_count=int(result.raw_summary.get("object_count", 0) or 0), warnings=list(result.warnings), summary={"kind_count": result.raw_summary.get("kind_count", 0)})
         run.completed_at = datetime.now(timezone.utc).isoformat()
         collections.append(run)
         snapshots.append({"id": f"{task_id}:{result.tool_id}", "task_id": task_id, "source": result.tool_id, "kind": result.raw_summary.get("kind", "adapter_summary"), "schema_version": result.raw_summary.get("schema_version", "unknown"), "content_hash": "", "warning_count": len(result.warnings)})
 
-    asset_graph = build_asset_graph(objects, rbac_rows)
-    lineage = build_lineage_graph(snapshots, assets, findings, getattr(report, "checkpoint_scores", []), [report], sources)
-    quality_results = _quality(objects, lineage)
-    processing_run = _pipeline(objects, findings, quality_results, lineage, asset_graph, report, normalization)
+    context = PipelineContext(
+        task_id=task_id,
+        objects=objects,
+        findings=list(findings),
+        report=report,
+        quality_summary=quality_summary,
+        rbac_rows=rbac_rows,
+        snapshots=snapshots,
+        sources=sources,
+    )
+    processing_run = _pipeline(context)
+    normalization = _normalization_from_context(context, processing_run)
+    assets = normalization["normalized_assets"]
+    asset_graph = context.asset_graph
+    quality_results = context.quality_results if context.quality_results is not None else []
+    final_findings = context.aggregated_findings if context.aggregated_findings is not None else list(findings)
+    lineage = build_lineage_graph(snapshots, assets, final_findings, getattr(report, "checkpoint_scores", []), [report], sources)
+    context.lineage = lineage
 
     apiserver = _commands(objects, "kube-apiserver")
     etcd_manifests = _commands(objects, "etcd")
@@ -196,6 +459,9 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
     encryption_configs = [parse_encryption_config(item.get("config", {}), source_name=item.get("path")) for item in objects if item.get("kind") == "EncryptionProviderConfig"]
     certificate_profiles = []
     for index, obj in enumerate(objects):
+        for certificate in obj.get("certificates", []) if isinstance(obj.get("certificates"), list) else []:
+            if isinstance(certificate, dict) and isinstance(certificate.get("profile"), dict):
+                certificate_profiles.append(certificate["profile"])
         for key, value in obj.items():
             if isinstance(value, str) and "-----BEGIN CERTIFICATE-----" in value:
                 certificate_profiles.append(inspect_certificate(value, source_name=f"{obj.get('kind', 'object')}:{index}:{key}"))
@@ -206,8 +472,7 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
     service_accounts = [item for item in objects if item.get("kind") == "ServiceAccount"]
     token_profiles = analyze_service_account_tokens(workloads, service_accounts, rbac_rows, None)
     identities = analyze_identity_profiles(rbac_rows)
-
-    return {
+    return normalize_structured_payload({
         "schema_version": "structured-assessment/v1",
         "task_id": task_id,
         "sources": [_jsonable(x) for x in sources],
@@ -232,8 +497,19 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
         "encryption": _jsonable(encryption_configs),
         "certificates": _jsonable(certificate_profiles),
         "mtls": _jsonable(mtls),
-        "module_counts": {"objects": len(objects), "findings": len(findings), "assets": len(assets), "lineage_nodes": len(lineage.nodes), "asset_nodes": len(asset_graph.nodes), "quality_results": len(quality_results), "etcd_nodes": len(etcd_profiles), "certificates": len(certificate_profiles)},
-    }
+        "module_counts": {
+            "objects": len(objects),
+            "findings": len(final_findings),
+            "assets": len(assets),
+            "lineage_nodes": len(lineage.nodes),
+            "asset_nodes": len(getattr(asset_graph, "nodes", []) or []),
+            "quality_results": len(quality_results),
+            "etcd_nodes": len(etcd_profiles),
+            "certificates": len(certificate_profiles),
+        },
+    })
 
 
-__all__ = ["build_structured_payload"]
+__all__ = ["CURRENT_STRUCTURED_SCHEMA_VERSION", "PipelineContext", "build_structured_payload", "normalize_structured_payload"]
+
+

@@ -85,6 +85,43 @@ class ApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/data-sources":
             self._json(self.store.list_source_descriptors())
             return
+        if parsed.path == "/api/field-mappings":
+            items = self._structured_records(("list_field_mappings", "list_mapping_rules"), "field_mapping_rules", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path == "/api/cleaning-actions":
+            items = self._structured_records(("list_cleaning_actions",), "cleaning_actions", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path == "/api/data-conflicts":
+            items = self._structured_records(("list_data_conflicts",), "data_conflicts", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path == "/api/collection-runs":
+            items = self._structured_records(("list_collection_runs",), "collection_runs", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path.startswith("/api/collection-runs/") and parsed.path.endswith("/attempts"):
+            parts = parsed.path.split("/")
+            run_id = unquote(parts[3]) if len(parts) > 3 else ""
+            items = self._structured_records(
+                ("list_collection_attempts", "list_collection_run_attempts"),
+                "collection_attempts",
+                query,
+                identifier=run_id,
+            )
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path == "/api/history":
+            items = self._structured_records(
+                ("list_history", "list_task_history", "list_tasks"),
+                "history",
+                query,
+                task_id=task_id,
+            )
+            self._json(self._structured_response(items, query))
+            return
+
         if parsed.path == "/api/structured":
             payload = self.store.get_structured_payload(task_id) if task_id else None
             self._json(payload if payload and (payload.get("processing_run") or payload.get("authentication") or payload.get("lineage", {}).get("nodes")) else {"error": "not found"}, 200 if payload and (payload.get("processing_run") or payload.get("authentication") or payload.get("lineage", {}).get("nodes")) else 404)
@@ -133,14 +170,24 @@ class ApiHandler(BaseHTTPRequestHandler):
             key = {"profile": "etcd", "nodes": "etcd", "certificates": "certificates", "encryption": "encryption", "consistency": "consistency"}.get(suffix, "etcd")
             self._json({"task_id": task_id, "data": payload.get(key, [])})
             return
+        if parsed.path == "/api/task-comparisons":
+            items = self.store.list_task_comparisons()
+            self._json({"items": items, "total": len(items)})
+            return
         if parsed.path == "/api/assessments/compare":
             base_id = query.get("base", [None])[0]
             current_id = query.get("current", [None])[0]
             if not base_id or not current_id:
                 self._json({"error": "base and current are required"}, 400)
                 return
-            result = compare_tasks(self.store.task_comparison_payload(base_id), self.store.task_comparison_payload(current_id))
-            self._json(result.to_dict())
+            stored = self.store.get_task_comparison(
+                baseline_task_id=base_id,
+                current_task_id=current_id,
+            )
+            if stored is None:
+                result = compare_tasks(self.store.task_comparison_payload(base_id), self.store.task_comparison_payload(current_id))
+                stored = self.store.save_task_comparison(base_id, current_id, result)
+            self._json(stored)
             return
         if parsed.path == "/api/checkpoints":
             self._json(self.store.list_checkpoints())
@@ -257,6 +304,121 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json(report if report else {"error": "not found"}, 200 if report else 404)
             return
         self._json({"error": "not found"}, 404)
+    @staticmethod
+    def _safe_structured_value(value: object, key: str = "") -> object:
+        """Keep structured endpoint responses JSON-safe and secret-free."""
+        lowered = key.lower().replace("-", "_")
+        sensitive = (
+            "password", "passwd", "secret", "token", "credential", "private",
+            "api_key", "access_key", "client_key", "encryption_key",
+        )
+        if any(part in lowered for part in sensitive):
+            return {"redacted": True} if value not in (None, "") else None
+        if isinstance(value, dict):
+            return {str(item_key): ApiHandler._safe_structured_value(item_value, str(item_key)) for item_key, item_value in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [ApiHandler._safe_structured_value(item) for item in value]
+        if hasattr(value, "to_dict") and callable(value.to_dict):
+            return ApiHandler._safe_structured_value(value.to_dict(), key)
+        return value
+
+    @staticmethod
+    def _query_number(query: dict[str, list[str]], name: str, default: int, maximum: int = 500) -> int:
+        try:
+            value = int(query.get(name, [str(default)])[0])
+        except (TypeError, ValueError):
+            value = default
+        return max(0, min(value, maximum))
+
+    def _structured_records(
+        self,
+        method_names: tuple[str, ...],
+        payload_key: str,
+        query: dict[str, list[str]],
+        *,
+        task_id: str | None = None,
+        identifier: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Read a structured collection from a store method, with old-store fallback."""
+        status = query.get("status", [None])[0]
+        keyword = query.get("keyword", [None])[0]
+        target_id = query.get("target_id", [None])[0]
+        kwargs: dict[str, object] = {}
+        if task_id:
+            kwargs["task_id"] = task_id
+        if target_id:
+            kwargs["target_id"] = target_id
+        if identifier:
+            kwargs.update({"run_id": identifier, "collection_run_id": identifier})
+        if status:
+            kwargs["status"] = status
+        if keyword:
+            kwargs["keyword"] = keyword
+        records: object | None = None
+        for method_name in method_names:
+            method = getattr(self.store, method_name, None)
+            if not callable(method):
+                continue
+            call_variants = [kwargs]
+            if identifier:
+                call_variants.extend([
+                    {key: value for key, value in kwargs.items() if key != "collection_run_id"},
+                    {key: value for key, value in kwargs.items() if key != "run_id"},
+                ])
+            call_variants.extend([
+                {key: value for key, value in kwargs.items() if key not in {"status", "keyword"}},
+                {"task_id": task_id} if task_id else {},
+                {},
+            ])
+            for call_kwargs in call_variants:
+                try:
+                    records = method(**call_kwargs)
+                    break
+                except TypeError:
+                    continue
+            if records is not None:
+                break
+        if records is None and task_id:
+            payload_method = getattr(self.store, "get_structured_payload", None)
+            if callable(payload_method):
+                try:
+                    payload = payload_method(task_id) or {}
+                except (TypeError, ValueError):
+                    payload = {}
+                records = payload.get(payload_key, []) if isinstance(payload, dict) else []
+        if isinstance(records, dict):
+            records = records.get("items", records.get(payload_key, []))
+        if not isinstance(records, (list, tuple)):
+            return []
+        result: list[dict[str, object]] = []
+        keyword_lower = str(keyword).lower() if keyword else ""
+        for item in records:
+            if hasattr(item, "to_dict") and callable(item.to_dict):
+                item = item.to_dict()
+            if not isinstance(item, dict):
+                continue
+            if task_id and item.get("task_id") not in (None, "", task_id):
+                continue
+            if status and str(item.get("status", "")).lower() != str(status).lower():
+                continue
+            if keyword_lower and keyword_lower not in json.dumps(item, ensure_ascii=False, default=str).lower():
+                continue
+            result.append(self._safe_structured_value(item))  # type: ignore[arg-type]
+        return result
+
+    def _structured_response(self, items: list[dict[str, object]], query: dict[str, list[str]]) -> dict[str, object]:
+        offset = self._query_number(query, "cursor", 0, 10_000_000)
+        limit = self._query_number(query, "limit", 100)
+        selected = items[offset : offset + limit]
+        next_cursor = str(offset + limit) if offset + limit < len(items) else None
+        return {
+            "items": selected,
+            "total": len(items),
+            "limit": limit,
+            "cursor": str(offset),
+            "next_cursor": next_cursor,
+        }
+
 
     def _query_findings(self, query: dict[str, list[str]], task_id: str | None = None) -> list[dict[str, object]]:
         return self.store.list_findings(
@@ -386,4 +548,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8000, db_path: str = "artifa
     handler.orchestrator = AssessmentOrchestrator()
     server = ThreadingHTTPServer((host, port), handler)
     print(f"serving http://{host}:{port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        handler.store.close()

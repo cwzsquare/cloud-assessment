@@ -43,6 +43,9 @@ class Checkpoint:
     weight: float
     dimensions: list[str]
     data_sources: list[str]
+    enabled: bool = True
+    applicability: dict[str, Any] = field(default_factory=dict)
+    rule_enabled: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

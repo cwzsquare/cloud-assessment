@@ -1235,3 +1235,110 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
     min-width: 680px;
   }
 }
+.graph-svg {
+  min-height: 150px;
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  background: #fbfcfa;
+}
+.stable-graph {
+  width: 100%;
+  min-width: 520px;
+  min-height: 150px;
+}
+.stable-graph .graph-edge {
+  stroke: #b8c9cf;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.stable-graph .graph-node {
+  cursor: pointer;
+}
+.stable-graph .graph-node rect {
+  fill: #fff;
+  stroke: #9cb7bd;
+  stroke-width: 1.2;
+}
+.stable-graph .graph-node.selected rect {
+  fill: #e7f5ed;
+  stroke: var(--accent-2);
+  stroke-width: 2;
+}
+.stable-graph .graph-node text {
+  fill: var(--ink);
+  font-size: 11px;
+}
+.stable-graph .graph-node .graph-kind {
+  fill: var(--muted);
+  font-size: 9px;
+}
+.asset-neighborhood {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.asset-neighborhood h3 {
+  margin-top: 0;
+}
+.comparison-panel {
+  margin-top: 12px;
+}
+.comparison-panel .filters label {
+  min-width: 180px;
+}
+.history-trend {
+  display: grid;
+  gap: 8px;
+}
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.5fr) repeat(7, minmax(70px, 1fr));
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 10px;
+  background: #fbfcfd;
+}
+.history-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.evidence-drawer[hidden] {
+  display: none;
+}
+.evidence-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.evidence-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 31, 38, .35);
+}
+.evidence-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(680px, 92vw);
+  padding: 22px;
+  overflow: auto;
+  background: var(--surface);
+  box-shadow: -10px 0 30px rgba(15, 31, 38, .18);
+}
+.evidence-body {
+  min-height: 220px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f7faf9;
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+.evidence-open {
+  margin: 8px 0;
+}

@@ -43,6 +43,49 @@ class ReportRendererTest(unittest.TestCase):
         self.assertIn("整改优先级", html)
         self.assertIn("UNKNOWN 原因样例", markdown)
         self.assertIn("<!doctype html>", html)
+    def test_structured_sections_are_summary_only_and_redacted(self) -> None:
+        report = {
+            "task_id": "structured-renderer-test",
+            "summary": {
+                "structured_analysis": {
+                    "quality_summary": {"completeness": 80, "collection_warning_count": 1},
+                    "authentication": {
+                        "status": "WARN",
+                        "evidence_present": True,
+                        "anonymous_auth": False,
+                        "reasons": ["plain-secret-token must never be shown"],
+                    },
+                    "identities": [{"status": "WARN", "dangerous": True}],
+                    "service_account_tokens": [
+                        {"status": "FAIL", "effective_automount": True, "reasons": ["private-key-data omitted"]},
+                    ],
+                    "certificates": [{"status": "PASS", "expired": False, "days_until_expiry": 90}],
+                    "etcd": [
+                        {
+                            "status": "PASS",
+                            "client": {"tls": True, "client_cert_auth": True},
+                            "peer": {"tls": True, "client_cert_auth": True},
+                        }
+                    ],
+                    "encryption": [
+                        {
+                            "status": "PASS",
+                            "provider_order": ["aescbc", "identity"],
+                            "rules": [{"providers": [{"provider_type": "aescbc", "config": {"key_data": "PRIVATE-KEY-DATA"}}]}],
+                        }
+                    ],
+                    "config_consistency": {"status": "PASS", "node_count": 1},
+                }
+            },
+        }
+        markdown = render_markdown_report(report)
+        html = render_html_report(report)
+        for title in ("数据处理与质量", "身份认证画像", "服务账号令牌摘要", "证书状态", "etcd 节点安全", "静态加密配置", "配置一致性"):
+            self.assertIn(title, markdown)
+            self.assertIn(title, html)
+        rendered = markdown + html
+        for sensitive in ("plain-secret-token", "PRIVATE-KEY-DATA", "private-key-data"):
+            self.assertNotIn(sensitive, rendered)
 
     def test_report_writers_create_files(self) -> None:
         with TemporaryDirectory() as temp_dir:

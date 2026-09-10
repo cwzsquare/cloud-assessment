@@ -6,8 +6,31 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-_SENSITIVE_NAMES = {"key", "keydata", "key-data", "secret", "token", "password", "privatekey", "private-key"}
-
+_SENSITIVE_NAMES = {
+    "key",
+    "keydata",
+    "key-data",
+    "secret",
+    "token",
+    "password",
+    "privatekey",
+    "private-key",
+    "private",
+    "keyfile",
+    "key-file",
+    "peer-key",
+    "etcd-keyfile",
+}
+_KMS_CONFIG_FIELDS = (
+    "name",
+    "apiVersion",
+    "api_version",
+    "endpoint",
+    "socket",
+    "timeout",
+    "cachesize",
+    "cacheSize",
+)
 
 def _load_source(source: Any) -> tuple[Any, str | None, str | None]:
     if isinstance(source, Mapping):
@@ -43,10 +66,20 @@ def _parse_document(value: Any) -> Any:
 
 
 def _safe_value(value: Any, key: str = "") -> Any:
-    if key.lower().replace("_", "-") in _SENSITIVE_NAMES or key.lower().replace("_", "-").endswith("keydata"):
+    normalized = key.lower().replace("_", "-")
+    if (
+        normalized in _SENSITIVE_NAMES
+        or normalized.endswith("keydata")
+        or normalized.endswith("key-file")
+        or normalized.endswith("keyfile")
+    ):
         return "[REDACTED]" if value not in (None, "") else None
     if isinstance(value, Mapping):
-        return {str(k): _safe_value(v, str(k)) for k, v in value.items() if str(k).lower() not in _SENSITIVE_NAMES}
+        return {
+            str(k): _safe_value(v, str(k))
+            for k, v in value.items()
+            if str(k).lower().replace("_", "-") not in _SENSITIVE_NAMES
+        }
     if isinstance(value, list):
         return [_safe_value(v, key) for v in value]
     return value
@@ -113,6 +146,13 @@ class EncryptionResourceRule:
     providers: list[EncryptionProviderProfile] = field(default_factory=list)
     api_groups: list[str] = field(default_factory=list)
     namespaces: list[str] = field(default_factory=list)
+    covers_secrets: bool | None = None
+    active_provider: str | None = None
+    fallback_providers: list[str] = field(default_factory=list)
+    identity_first: bool | None = None
+    identity_last: bool | None = None
+    encrypted_write_enabled: bool | None = None
+    key_rotation_structure: dict[str, Any] = field(default_factory=dict)
 
     @property
     def provider_order(self) -> list[str]:
@@ -121,6 +161,10 @@ class EncryptionResourceRule:
     @property
     def key_names(self) -> list[str]:
         return [key for provider in self.providers for key in provider.key_names]
+
+    @property
+    def rotation_structure(self) -> dict[str, Any]:
+        return self.key_rotation_structure
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -151,13 +195,27 @@ class EncryptionProviderProfileResult:
 EncryptionConfigProfile = EncryptionProviderProfileResult
 
 
+def _provider_config(body: Mapping[str, Any], provider_type: str) -> dict[str, Any]:
+    """Keep provider configuration fields, never key objects or runtime claims."""
+    if provider_type != "kms":
+        # Non-KMS providers carry key objects; only their names are exposed
+        # separately, so no provider body is retained in the profile.
+        return {}
+    return {
+        name: _safe_value(body[name], name)
+        for name in _KMS_CONFIG_FIELDS
+        if name in body and body[name] not in (None, "")
+    }
+
+
 def _provider(value: Any) -> EncryptionProviderProfile | None:
     if not isinstance(value, Mapping) or not value:
         return None
-    provider_type = str(next(iter(value))).lower()
-    body = value.get(next(iter(value)))
+    provider_key = next(iter(value))
+    provider_type = str(provider_key).lower()
+    body = value.get(provider_key)
     body = body if isinstance(body, Mapping) else {}
-    safe = _safe_value(body)
+    config = _provider_config(body, provider_type)
     key_names: list[str] = []
     for key in _list(body.get("keys")):
         if isinstance(key, Mapping) and key.get("name") is not None:
@@ -170,9 +228,9 @@ def _provider(value: Any) -> EncryptionProviderProfile | None:
             endpoint=_name(body.get("endpoint", body.get("socket"))),
             timeout=_name(body.get("timeout")),
             cache_size=_int_or_none(body.get("cachesize", body.get("cacheSize"))),
-            config=safe if isinstance(safe, dict) else {},
+            config=config,
         )
-    return EncryptionProviderProfile(provider_type, key_names, kms, safe if isinstance(safe, dict) else {})
+    return EncryptionProviderProfile(provider_type, key_names, kms, config)
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -180,6 +238,42 @@ def _int_or_none(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _derive_rule_fields(
+    resources: list[str],
+    providers: list[EncryptionProviderProfile],
+) -> dict[str, Any]:
+    covers_secrets: bool | None
+    if resources:
+        covers_secrets = any(
+            resource.strip().lower().split("/", 1)[0] in {"secret", "secrets"}
+            for resource in resources
+        )
+    else:
+        covers_secrets = None
+    order = [provider.provider_type for provider in providers]
+    active = order[0] if order else None
+    fallback = order[1:]
+    identity_first = None if not order else active == "identity"
+    identity_last = None if not order else order[-1] == "identity"
+    encrypted_write_enabled = None if active is None else active != "identity"
+    rotation = {
+        "active_provider": active,
+        "fallback_providers": fallback,
+        "identity_first": identity_first,
+        "identity_last": identity_last,
+        "rotation_safe": bool(identity_last and not identity_first),
+    }
+    return {
+        "covers_secrets": covers_secrets,
+        "active_provider": active,
+        "fallback_providers": fallback,
+        "identity_first": identity_first,
+        "identity_last": identity_last,
+        "encrypted_write_enabled": encrypted_write_enabled,
+        "key_rotation_structure": rotation,
+    }
 
 
 def parse_encryption_config(source: Any, *, source_name: str | None = None) -> EncryptionProviderProfileResult:
@@ -197,12 +291,15 @@ def parse_encryption_config(source: Any, *, source_name: str | None = None) -> E
             continue
         providers = [p for p in (_provider(x) for x in _list(row.get("providers"))) if p is not None]
         resources = [str(x) for x in _list(row.get("resources"))]
-        rules.append(EncryptionResourceRule(
-            resources=resources,
-            providers=providers,
-            api_groups=[str(x) for x in _list(row.get("apiGroups", row.get("api_groups")))],
-            namespaces=[str(x) for x in _list(row.get("namespaces"))],
-        ))
+        rules.append(
+            EncryptionResourceRule(
+                resources=resources,
+                providers=providers,
+                api_groups=[str(x) for x in _list(row.get("apiGroups", row.get("api_groups")))],
+                namespaces=[str(x) for x in _list(row.get("namespaces"))],
+                **_derive_rule_fields(resources, providers),
+            )
+        )
     order = [provider.provider_type for rule in rules for provider in rule.providers]
     keys = [key for rule in rules for key in rule.key_names]
     kms = [provider.kms for rule in rules for provider in rule.providers if provider.kms is not None]
@@ -212,6 +309,9 @@ def parse_encryption_config(source: Any, *, source_name: str | None = None) -> E
     elif any(not rule.providers for rule in rules):
         status = "FAIL"
         errors.append("resource rule has no providers")
+    elif any(not rule.resources for rule in rules):
+        status = "UNKNOWN"
+        errors.append("resource rule has no resources")
     elif any(rule.provider_order[-1:] != ["identity"] for rule in rules):
         # identity last is the Kubernetes rotation-safe fallback convention.
         status = "WARN"

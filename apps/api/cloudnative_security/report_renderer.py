@@ -20,10 +20,23 @@ def report_to_dict(report: Any) -> dict[str, Any]:
         return {}
     if isinstance(report, dict):
         if "report" in report and isinstance(report["report"], dict):
-            return report["report"]
+            payload = dict(report["report"])
+            # OrchestratorResult.to_dict() keeps the full structured payload
+            # beside the report; retain it for the structured report chapter.
+            for key in ("structured", "structured_analysis"):
+                if key in report and key not in payload:
+                    payload[key] = report[key]
+            return payload
         return report
     if hasattr(report, "to_dict"):
-        return report.to_dict()
+        payload = report.to_dict()
+        if isinstance(payload, dict) and isinstance(payload.get("report"), dict):
+            inner = dict(payload["report"])
+            for key in ("structured", "structured_analysis"):
+                if key in payload and key not in inner:
+                    inner[key] = payload[key]
+            return inner
+        return payload
     if is_dataclass(report):
         return asdict(report)
     raise TypeError(f"unsupported report type: {type(report)!r}")
@@ -84,8 +97,24 @@ def render_markdown_report(report: Any) -> str:
 
     lines.extend(["", "## 6. 数据质量与限制", ""])
     lines.extend(_markdown_data_quality(summary, data))
+    lines.extend(["", "## 7. 数据处理与质量", ""])
+    lines.extend(_markdown_structured_quality(data, _structured_payload(data)))
+    lines.extend(["", "## 8. 身份认证画像", ""])
+    lines.extend(_markdown_authentication(_structured_payload(data)))
+    lines.extend(["", "### RBAC 身份汇总", ""])
+    lines.extend(_markdown_identity(_structured_payload(data)))
+    lines.extend(["", "## 9. 服务账号令牌摘要", ""])
+    lines.extend(_markdown_service_account_tokens(_structured_payload(data)))
+    lines.extend(["", "## 10. 证书状态", ""])
+    lines.extend(_markdown_certificates(_structured_payload(data)))
+    lines.extend(["", "## 11. etcd 节点安全", ""])
+    lines.extend(_markdown_etcd(_structured_payload(data)))
+    lines.extend(["", "## 12. 静态加密配置", ""])
+    lines.extend(_markdown_encryption(_structured_payload(data)))
+    lines.extend(["", "## 13. 配置一致性", ""])
+    lines.extend(_markdown_consistency(_structured_payload(data)))
 
-    lines.extend(["", "## 7. 附录", ""])
+    lines.extend(["", "## 14. 附录", ""])
     lines.append(f"- Schema Version: `{data.get('schema_version', '')}`")
     data_quality = _dict(summary.get("data_quality"))
     lines.append(f"- Raw Snapshot Count: `{data_quality.get('raw_snapshot_count', '')}`")
@@ -104,6 +133,7 @@ def render_html_report(report: Any) -> str:
     if not data:
         return "<!doctype html><html><body><h1>Report not found</h1></body></html>\n"
     summary = _dict(data.get("summary"))
+    structured = _structured_payload(data)
     key_risks = _key_risks(data)
     references = _references(data)
     html = [
@@ -165,7 +195,29 @@ def render_html_report(report: Any) -> str:
             "<section><h2>6. 数据质量与限制</h2>",
             _html_data_quality(summary, data),
             "</section>",
-            "<section><h2>7. 附录</h2>",
+            '<section><h2>7. 数据处理与质量</h2>',
+            _html_structured_quality(data, structured),
+            "</section>",
+            '<section><h2>8. 身份认证画像</h2>',
+            _html_authentication(structured),
+            "<h3>RBAC 身份汇总</h3>",
+            _html_identity(structured),
+            '<section><h2>9. 服务账号令牌摘要</h2>',
+            _html_service_account_tokens(structured),
+            "</section>",
+            '<section><h2>10. 证书状态</h2>',
+            _html_certificates(structured),
+            "</section>",
+            '<section><h2>11. etcd 节点安全</h2>',
+            _html_etcd(structured),
+            "</section>",
+            '<section><h2>12. 静态加密配置</h2>',
+            _html_encryption(structured),
+            "</section>",
+            '<section><h2>13. 配置一致性</h2>',
+            _html_consistency(structured),
+            "</section>",
+            "<section><h2>14. 附录</h2>",
             "<ul>",
             f"<li>Schema Version: <code>{_h(data.get('schema_version', ''))}</code></li>",
             f"<li>Raw Snapshot Count: <code>{_h(_dict(summary.get('data_quality')).get('raw_snapshot_count', ''))}</code></li>",
@@ -195,6 +247,350 @@ def _write_text(path: str | Path, text: str) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text)
+_SENSITIVE_MARKERS = (
+    "token",
+    "secret",
+    "password",
+    "private_key",
+    "private-key",
+    "private key",
+    "key_data",
+    "key-data",
+    "key data",
+)
+
+
+def _structured_payload(report: dict[str, Any]) -> dict[str, Any]:
+    """Collect structured data without requiring a full OrchestratorResult."""
+    summary = _dict(report.get("summary"))
+    candidates = [
+        report.get("structured"),
+        report.get("structured_analysis"),
+        summary.get("structured"),
+        summary.get("structured_analysis"),
+    ]
+    merged: dict[str, Any] = {}
+    for candidate in candidates:
+        candidate_dict = _dict(candidate)
+        for key, value in candidate_dict.items():
+            if key not in merged:
+                merged[key] = value
+            elif isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = {**merged[key], **value}
+            elif isinstance(value, (dict, list)) and not merged[key]:
+                merged[key] = value
+    return merged
+
+
+def _value(mapping: dict[str, Any], key: str, default: str = "UNKNOWN") -> Any:
+    value = mapping.get(key)
+    return default if value is None or value == "" else value
+
+
+def _count(mapping: dict[str, Any], key: str, fallback: Any = "UNKNOWN") -> Any:
+    if key in mapping:
+        value = mapping[key]
+        if isinstance(value, list):
+            return len(value)
+        return 0 if value is None else value
+    return fallback
+
+
+def _profiles(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [_dict(item) for item in value if _dict(item)]
+    item = _dict(value)
+    if not item:
+        return []
+    for key in ("profiles", "items", "results", "nodes"):
+        if isinstance(item.get(key), list):
+            return [_dict(row) for row in item[key] if _dict(row)]
+    return [item]
+
+
+def _status_counts(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "UNKNOWN"
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(_value(item, "status")).upper()
+        counts[status] = counts.get(status, 0) + 1
+    return ", ".join(f"{status}={count}" for status, count in sorted(counts.items()))
+
+
+def _bool_counts(items: list[dict[str, Any]], key: str) -> str:
+    known = [item.get(key) for item in items if item.get(key) is not None]
+    if not known:
+        return "UNKNOWN"
+    true_count = sum(value is True for value in known)
+    false_count = sum(value is False for value in known)
+    return f"启用={true_count}, 未启用={false_count}"
+
+
+def _bool_value(value: Any) -> str:
+    if value is True:
+        return "启用"
+    if value is False:
+        return "未启用"
+    return "UNKNOWN"
+
+
+def _safe_issue(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if any(marker in text.lower() for marker in _SENSITIVE_MARKERS):
+        return "敏感内容已脱敏"
+    return text[:300]
+
+
+def _issues(items: list[dict[str, Any]], keys: tuple[str, ...] = ("reasons", "errors", "issues")) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        for key in keys:
+            values = item.get(key)
+            if not isinstance(values, list):
+                values = [values] if values else []
+            for value in values:
+                issue = _safe_issue(value)
+                if issue and issue not in result:
+                    result.append(issue)
+    return result[:20]
+
+
+def _issue_lines(issues: list[str], prefix: str = "异常项") -> list[str]:
+    if not issues:
+        return [f"- {prefix}: 暂无证据"]
+    return [f"- {prefix}:"] + [f"  - {issue}" for issue in issues]
+
+
+def _markdown_structured_quality(report: dict[str, Any], structured: dict[str, Any]) -> list[str]:
+    summary = _dict(report.get("summary"))
+    quality = _dict(structured.get("quality_summary")) or _dict(summary.get("data_quality"))
+    processing = _dict(structured.get("processing_run"))
+    counts = _dict(structured.get("module_counts"))
+    source_rows = _profiles(structured.get("sources"))
+    collection_rows = _profiles(structured.get("collection_runs"))
+    conflicts = _list(structured.get("data_conflicts"))
+    cleaning = _list(structured.get("cleaning_actions"))
+    warnings = _list(structured.get("data_quality_results"))
+    lines = [
+        f"- 处理状态: `{_value(processing, 'status')}`",
+        f"- 数据完整性: `{_value(quality, 'completeness')}%`",
+        f"- 数据新鲜度: `{_value(quality, 'freshness')}%`",
+        f"- 重复率: `{_value(quality, 'duplicate_rate')}%`",
+        f"- UNKNOWN 比例: `{_value(quality, 'unknown_rate')}%`",
+        f"- 原始快照/规范化 finding: `{_value(quality, 'raw_snapshot_count', _value(counts, 'objects'))}` / `{_value(quality, 'normalized_finding_count', _value(counts, 'findings'))}`",
+        f"- 来源/采集运行: `{len(source_rows) if source_rows else _value(counts, 'sources')}` / `{len(collection_rows) if collection_rows else _value(counts, 'collection_runs')}`",
+        f"- 质量结果/数据冲突/清洗动作: `{len(warnings) if warnings else _value(counts, 'quality_results')}` / `{len(conflicts) if 'data_conflicts' in structured else 'UNKNOWN'}` / `{len(cleaning) if 'cleaning_actions' in structured else 'UNKNOWN'}`",
+        f"- Schema 错误/采集警告: `{_value(quality, 'schema_error_count')}` / `{_value(quality, 'collection_warning_count')}`",
+    ]
+    processing_issues = _issues([processing]) if processing else []
+    return lines + _issue_lines(processing_issues, "处理异常")
+
+
+def _markdown_authentication(structured: dict[str, Any]) -> list[str]:
+    profile = _dict(structured.get("authentication"))
+    nested = [_dict(profile.get(key)) for key in ("oidc", "webhook", "front_proxy") if _dict(profile.get(key))]
+    issues = _issues([profile, *nested])
+    return [
+        f"- 状态: `{_value(profile, 'status')}`",
+        f"- 证据: `{_bool_value(profile.get('evidence_present')) if 'evidence_present' in profile else '暂无证据'}`",
+        f"- 匿名访问: `{_bool_value(profile.get('anonymous_auth'))}`",
+        f"- 匿名授权状态: `{_value(profile, 'anonymous_authorization_status')}`",
+        f"- OIDC/Webhook/Front Proxy: `{_value(_dict(profile.get('oidc')), 'status')}` / `{_value(_dict(profile.get('webhook')), 'status')}` / `{_value(_dict(profile.get('front_proxy')), 'status')}`",
+        "- 安全摘要: 仅呈现认证机制状态和安全布尔值，不输出认证配置原文。",
+        *_issue_lines(issues),
+    ]
+
+
+def _markdown_identity(structured: dict[str, Any]) -> list[str]:
+    profiles = _profiles(structured.get("identities"))
+    dangerous = sum(item.get("dangerous") is True for item in profiles)
+    broad = sum(item.get("broad") is True for item in profiles)
+    return [
+        f"- 身份数量: `{len(profiles) if 'identities' in structured else 'UNKNOWN'}`",
+        f"- 状态分布: `{_status_counts(profiles)}`",
+        f"- 高风险/宽权限身份: `{dangerous}` / `{broad}`" if profiles else "- 高风险/宽权限身份: `UNKNOWN` / `UNKNOWN`",
+        f"- 异常身份数: `{sum(item.get('dangerous') is True or item.get('broad') is True for item in profiles) if profiles else 'UNKNOWN'}`",
+        "- 安全摘要: 仅汇总身份风险标记、状态和权限异常，不输出主体权限明细。",
+        *_issue_lines(_issues(profiles)),
+    ]
+
+
+def _markdown_service_account_tokens(structured: dict[str, Any]) -> list[str]:
+    profiles = _profiles(structured.get("service_account_tokens"))
+    expiration_bad = sum(item.get("expiration_ok") is False for item in profiles)
+    audience_bad = sum(item.get("audience_ok") is False for item in profiles)
+    alignment = [item for item in profiles if item.get("api_permission_alignment") is not None]
+    return [
+        f"- 工作负载数量: `{len(profiles) if 'service_account_tokens' in structured else 'UNKNOWN'}`",
+        f"- 状态分布: `{_status_counts(profiles)}`",
+        f"- 有效自动挂载/Projected Token: `{_bool_counts(profiles, 'effective_automount')}` / `{_bool_counts(profiles, 'projected_token')}`",
+        f"- 过期策略/受众异常: `{expiration_bad if profiles else 'UNKNOWN'}` / `{audience_bad if profiles else 'UNKNOWN'}`",
+        f"- API 权限对齐状态: `{_status_counts([{'status': item.get('api_permission_alignment')} for item in alignment]) if alignment else 'UNKNOWN'}`",
+        "- 安全摘要: 仅呈现令牌生命周期、挂载和权限对齐统计，不输出令牌值或服务账号原文。",
+        *_issue_lines(_issues(profiles)),
+    ]
+
+
+def _markdown_certificates(structured: dict[str, Any]) -> list[str]:
+    profiles = _profiles(structured.get("certificates"))
+    expired = sum(item.get("expired") is True for item in profiles)
+    expiring = sum(isinstance(item.get("days_until_expiry"), (int, float)) and item["days_until_expiry"] <= 30 for item in profiles)
+    return [
+        f"- 证书数量: `{len(profiles) if 'certificates' in structured else 'UNKNOWN'}`",
+        f"- 状态分布: `{_status_counts(profiles)}`",
+        f"- 已过期/30 日内到期: `{expired if profiles else 'UNKNOWN'}` / `{expiring if profiles else 'UNKNOWN'}`",
+        f"- 解析错误数: `{sum(bool(item.get('error')) for item in profiles) if profiles else 'UNKNOWN'}`",
+        "- 安全摘要: 仅展示证书状态、有效期风险和解析结果，不输出私钥或证书原文。",
+        *_issue_lines(_issues(profiles, ("error", "reasons", "errors"))),
+    ]
+
+
+def _markdown_etcd(structured: dict[str, Any]) -> list[str]:
+    profiles = _profiles(structured.get("etcd"))
+    clients = [_dict(item.get("client")) for item in profiles]
+    peers = [_dict(item.get("peer")) for item in profiles]
+    apiserver = _profiles(structured.get("apiserver_etcd"))
+    return [
+        f"- etcd 节点数量: `{len(profiles) if 'etcd' in structured else 'UNKNOWN'}`",
+        f"- 节点状态分布: `{_status_counts(profiles)}`",
+        f"- 客户端/Peer TLS: `{_bool_counts(clients, 'tls')}` / `{_bool_counts(peers, 'tls')}`",
+        f"- 客户端证书认证: `{_bool_counts(clients, 'client_cert_auth')}` / `{_bool_counts(peers, 'client_cert_auth')}`",
+        f"- apiserver-etcd 客户端状态: `{_status_counts(apiserver)}`",
+        "- 安全摘要: 仅呈现节点传输安全和证书认证开关，不输出证书、私钥路径或端点详情。",
+        *_issue_lines(_issues(profiles)),
+    ]
+
+
+def _markdown_encryption(structured: dict[str, Any]) -> list[str]:
+    profiles = _profiles(structured.get("encryption"))
+    rules = sum(len(_list(item.get("rules"))) for item in profiles)
+    providers = []
+    for item in profiles:
+        providers.extend(str(value) for value in _list(item.get("provider_order")) if value)
+    return [
+        f"- 配置数量: `{len(profiles) if 'encryption' in structured else 'UNKNOWN'}`",
+        f"- 状态分布: `{_status_counts(profiles)}`",
+        f"- 资源规则/KMS 提供方: `{rules if profiles else 'UNKNOWN'}` / `{sum(len(_list(item.get('kms_providers'))) for item in profiles) if profiles else 'UNKNOWN'}`",
+        f"- Provider 类型摘要: `{', '.join(sorted(set(providers))) if providers else '暂无证据'}`",
+        "- 安全摘要: 仅呈现 provider 类型、规则数量和状态，不输出 key、key data 或配置原文。",
+        *_issue_lines(_issues(profiles)),
+    ]
+
+
+def _markdown_consistency(structured: dict[str, Any]) -> list[str]:
+    profile = _dict(structured.get("config_consistency"))
+    issues = _issues([profile], ("issues", "errors", "reasons"))
+    return [
+        f"- 一致性状态: `{_value(profile, 'status')}`",
+        f"- 比较节点数: `{_value(profile, 'node_count')}`",
+        f"- 比较字段: `{', '.join(str(item) for item in _list(profile.get('compared_fields'))) or '暂无证据'}`",
+        "- 安全摘要: 一致性检查聚焦 etcd 节点传输和客户端证书认证策略。",
+        *_issue_lines(issues),
+    ]
+
+
+def _html_list(items: list[tuple[str, Any]]) -> str:
+    body = "".join(f"<li>{_h(label)}: <code>{_h(value)}</code></li>" for label, value in items)
+    return f"<ul>{body}</ul>"
+
+
+def _html_issues(issues: list[str], label: str = "异常项") -> str:
+    if not issues:
+        return f"<p>{_h(label)}: 暂无证据</p>"
+    return f"<h3>{_h(label)}</h3><ul>{''.join(f'<li>{_h(issue)}</li>' for issue in issues)}</ul>"
+
+
+def _html_structured_quality(report: dict[str, Any], structured: dict[str, Any]) -> str:
+    lines = _markdown_structured_quality(report, structured)
+    return "<ul>" + "".join(f"<li>{_h(line[2:])}</li>" for line in lines if line.startswith("- ")) + "</ul>"
+
+
+def _html_authentication(structured: dict[str, Any]) -> str:
+    profile = _dict(structured.get("authentication"))
+    nested = [_dict(profile.get(key)) for key in ("oidc", "webhook", "front_proxy") if _dict(profile.get(key))]
+    return _html_list([
+        ("状态", _value(profile, "status")),
+        ("证据", _bool_value(profile.get("evidence_present")) if "evidence_present" in profile else "暂无证据"),
+        ("匿名访问", _bool_value(profile.get("anonymous_auth"))),
+        ("匿名授权状态", _value(profile, "anonymous_authorization_status")),
+        ("OIDC/Webhook/Front Proxy", " / ".join(_value(_dict(profile.get(key)), "status") for key in ("oidc", "webhook", "front_proxy"))),
+    ]) + "<p>安全摘要: 仅呈现认证机制状态和安全布尔值，不输出认证配置原文。</p>" + _html_issues(_issues([profile, *nested]))
+
+
+def _html_identity(structured: dict[str, Any]) -> str:
+    profiles = _profiles(structured.get("identities"))
+    dangerous = sum(item.get("dangerous") is True for item in profiles)
+    broad = sum(item.get("broad") is True for item in profiles)
+    return _html_list([
+        ("身份数量", len(profiles) if "identities" in structured else "UNKNOWN"),
+        ("状态分布", _status_counts(profiles)),
+        ("高风险/宽权限身份", f"{dangerous} / {broad}" if profiles else "UNKNOWN / UNKNOWN"),
+        ("异常身份数", sum(item.get("dangerous") is True or item.get("broad") is True for item in profiles) if profiles else "UNKNOWN"),
+    ]) + "<p>安全摘要: 仅汇总身份风险标记、状态和权限异常，不输出主体权限明细。</p>" + _html_issues(_issues(profiles))
+
+
+def _html_service_account_tokens(structured: dict[str, Any]) -> str:
+    profiles = _profiles(structured.get("service_account_tokens"))
+    expiration_bad = sum(item.get("expiration_ok") is False for item in profiles)
+    audience_bad = sum(item.get("audience_ok") is False for item in profiles)
+    return _html_list([
+        ("工作负载数量", len(profiles) if "service_account_tokens" in structured else "UNKNOWN"),
+        ("状态分布", _status_counts(profiles)),
+        ("有效自动挂载/Projected Token", f"{_bool_counts(profiles, 'effective_automount')} / {_bool_counts(profiles, 'projected_token')}"),
+        ("过期策略/受众异常", f"{expiration_bad if profiles else 'UNKNOWN'} / {audience_bad if profiles else 'UNKNOWN'}"),
+    ]) + "<p>安全摘要: 仅呈现令牌生命周期、挂载和权限对齐统计，不输出令牌值或服务账号原文。</p>" + _html_issues(_issues(profiles))
+
+
+def _html_certificates(structured: dict[str, Any]) -> str:
+    profiles = _profiles(structured.get("certificates"))
+    expired = sum(item.get("expired") is True for item in profiles)
+    expiring = sum(isinstance(item.get("days_until_expiry"), (int, float)) and item["days_until_expiry"] <= 30 for item in profiles)
+    return _html_list([
+        ("证书数量", len(profiles) if "certificates" in structured else "UNKNOWN"),
+        ("状态分布", _status_counts(profiles)),
+        ("已过期/30 日内到期", f"{expired if profiles else 'UNKNOWN'} / {expiring if profiles else 'UNKNOWN'}"),
+        ("解析错误数", sum(bool(item.get("error")) for item in profiles) if profiles else "UNKNOWN"),
+    ]) + "<p>安全摘要: 仅展示证书状态、有效期风险和解析结果，不输出私钥或证书原文。</p>" + _html_issues(_issues(profiles, ("error", "reasons", "errors")))
+
+
+def _html_etcd(structured: dict[str, Any]) -> str:
+    profiles = _profiles(structured.get("etcd"))
+    clients = [_dict(item.get("client")) for item in profiles]
+    peers = [_dict(item.get("peer")) for item in profiles]
+    apiserver = _profiles(structured.get("apiserver_etcd"))
+    return _html_list([
+        ("etcd 节点数量", len(profiles) if "etcd" in structured else "UNKNOWN"),
+        ("节点状态分布", _status_counts(profiles)),
+        ("客户端/Peer TLS", f"{_bool_counts(clients, 'tls')} / {_bool_counts(peers, 'tls')}"),
+        ("客户端证书认证", f"{_bool_counts(clients, 'client_cert_auth')} / {_bool_counts(peers, 'client_cert_auth')}"),
+        ("apiserver-etcd 客户端状态", _status_counts(apiserver)),
+    ]) + "<p>安全摘要: 仅呈现节点传输安全和证书认证开关，不输出证书、私钥路径或端点详情。</p>" + _html_issues(_issues(profiles))
+
+
+def _html_encryption(structured: dict[str, Any]) -> str:
+    profiles = _profiles(structured.get("encryption"))
+    rules = sum(len(_list(item.get("rules"))) for item in profiles)
+    providers = [str(value) for item in profiles for value in _list(item.get("provider_order")) if value]
+    return _html_list([
+        ("配置数量", len(profiles) if "encryption" in structured else "UNKNOWN"),
+        ("状态分布", _status_counts(profiles)),
+        ("资源规则/KMS 提供方", f"{rules if profiles else 'UNKNOWN'} / {sum(len(_list(item.get('kms_providers'))) for item in profiles) if profiles else 'UNKNOWN'}"),
+        ("Provider 类型摘要", ", ".join(sorted(set(providers))) if providers else "暂无证据"),
+    ]) + "<p>安全摘要: 仅呈现 provider 类型、规则数量和状态，不输出 key、key data 或配置原文。</p>" + _html_issues(_issues(profiles))
+
+
+def _html_consistency(structured: dict[str, Any]) -> str:
+    profile = _dict(structured.get("config_consistency"))
+    issues = _issues([profile], ("issues", "errors", "reasons"))
+    return _html_list([
+        ("一致性状态", _value(profile, "status")),
+        ("比较节点数", _value(profile, "node_count")),
+        ("比较字段", ", ".join(str(item) for item in _list(profile.get("compared_fields"))) or "暂无证据"),
+    ]) + "<p>安全摘要: 一致性检查聚焦 etcd 节点传输和客户端证书认证策略。</p>" + _html_issues(issues)
+
 
 
 def _markdown_matrix(title: str, report: dict[str, Any], domains: list[str] | None) -> list[str]:

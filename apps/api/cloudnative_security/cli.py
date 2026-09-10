@@ -52,7 +52,8 @@ def main() -> int:
     result = AssessmentOrchestrator().run(request)
     report_for_export = result.report
     if args.sqlite:
-        report_for_export = AssessmentStore(args.sqlite).save_result(result)
+        with AssessmentStore(args.sqlite) as store:
+            report_for_export = store.save_result(result)
     if args.markdown_output:
         export_markdown_report(report_for_export, args.markdown_output)
     if args.html_output:

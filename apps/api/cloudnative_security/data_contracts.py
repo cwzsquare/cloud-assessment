@@ -106,6 +106,20 @@ class SourceDescriptor(_Serializable):
         """Compatibility alias for APIs that call source identifiers ``id``."""
 
         return self.source_id
+    def to_dict(self) -> dict[str, Any]:
+        """Expose storage/API source vocabulary without dropping legacy fields."""
+        result = super().to_dict()
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        result.update(
+            {
+                "display_name": self.name,
+                "connection_mode": metadata.get("mode", "unknown"),
+                "capabilities": list(metadata.get("capabilities") or []),
+                "schema_name": self.source_type,
+                "schema_version": self.version or "unknown",
+            }
+        )
+        return result
 
 
 @dataclass
