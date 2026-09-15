@@ -214,6 +214,11 @@ def build_lineage_graph(
     sources: Any = None,
     *,
     assets: Any = None,
+    quality_results: Any = None,
+    anomalies: Any = None,
+    associations: Any = None,
+    cleaning_actions: Any = None,
+    mapping_rules: Any = None,
 ) -> LineageGraph:
     """Build provenance records and only connect references that exist.
 
@@ -332,7 +337,99 @@ def build_lineage_graph(
             checkpoint_node = checkpoint_ids.get(str(_mapping(checkpoint).get("checkpoint_id")))
             if checkpoint_node:
                 graph.add_edge(LineageEdge(checkpoint_node, report_id, "included_in"))
+    def _refs(value: Any) -> set[str]:
+        data = _mapping(value)
+        refs: set[str] = {str(ref) for ref in data.get("evidence_refs", []) if ref}
+        details = _mapping(data.get("details"))
+        refs.update(str(ref) for ref in details.get("evidence_refs", []) if ref)
+        for example in _items(data.get("examples")):
+            example_data = _mapping(example)
+            refs.update(str(ref) for ref in example_data.get("evidence_refs", example_data.get("record_refs", [])) if ref)
+        return refs
+
+
+    quality_nodes: dict[str, tuple[str, set[str]]] = {}
+    for item in _items(quality_results):
+        data = _mapping(item)
+        rule_id = data.get("rule_id")
+        node_id = _node_id("quality", rule_id)
+        if not node_id:
+            continue
+        graph.add_node(LineageNode(node_id, "quality_result", str(rule_id), _clean_metadata({k: data[k] for k in ("status", "score", "dimension", "message") if k in data})))
+        quality_nodes[str(rule_id)] = (node_id, _refs(data))
+
+    anomaly_nodes: list[tuple[str, set[str]]] = []
+    for item in _items(anomalies):
+        data = _mapping(item)
+        anomaly_id = data.get("anomaly_id") or data.get("id")
+        node_id = _node_id("anomaly", anomaly_id)
+        if not node_id:
+            continue
+        refs = {str(ref) for ref in data.get("evidence_refs", []) if ref}
+        graph.add_node(LineageNode(node_id, "anomaly", str(data.get("field_path") or anomaly_id), _clean_metadata({k: data[k] for k in ("anomaly_type", "status", "source_id", "object_key", "field_path", "rule_id", "reason") if k in data})))
+        anomaly_nodes.append((node_id, refs))
+        source_name = data.get("source_id")
+        if _known(source_name):
+            source_node = source_ids.get(str(source_name)) or _node_id("source", source_name)
+            if source_node:
+                graph.add_node(LineageNode(source_node, "source", str(source_name)))
+                source_ids[str(source_name)] = source_node
+                graph.add_edge(LineageEdge(source_node, node_id, "observes"))
+
+    association_nodes: list[tuple[str, set[str]]] = []
+    association_data = _mapping(associations)
+    for group in _items(association_data.get("groups")):
+        data = _mapping(group)
+        association_id = data.get("association_id")
+        node_id = _node_id("association", association_id)
+        if not node_id:
+            continue
+        refs = {str(ref) for ref in data.get("record_refs", []) if ref}
+        graph.add_node(LineageNode(node_id, "association", str(association_id), _clean_metadata({k: data[k] for k in ("status", "source_ids", "reason") if k in data})))
+        association_nodes.append((node_id, refs))
+        for source_name in data.get("source_ids", []) or []:
+            if _known(source_name):
+                source_node = source_ids.get(str(source_name)) or _node_id("source", source_name)
+                if source_node:
+                    graph.add_node(LineageNode(source_node, "source", str(source_name)))
+                    source_ids[str(source_name)] = source_node
+                    graph.add_edge(LineageEdge(source_node, node_id, "associates"))
+
+    for action_index, action in enumerate(_items(cleaning_actions)):
+        data = _mapping(action)
+        node_id = _node_id("cleaning", data.get("action_id") or f"{data.get('source_id', '')}|{data.get('object_key', '')}|{data.get('field_path', '')}|{action_index}")
+        if not node_id:
+            continue
+        graph.add_node(LineageNode(node_id, "cleaning", str(data.get("field_path") or node_id), _clean_metadata({k: data[k] for k in ("action_type", "source_id", "object_key", "reason") if k in data})))
+        source_name = data.get("source_id")
+        if _known(source_name):
+            source_node = source_ids.get(str(source_name)) or _node_id("source", source_name)
+            if source_node:
+                graph.add_node(LineageNode(source_node, "source", str(source_name)))
+                source_ids[str(source_name)] = source_node
+                graph.add_edge(LineageEdge(source_node, node_id, "cleans"))
+
+    for rule in _items(mapping_rules):
+        data = _mapping(rule)
+        mapping_id = data.get("mapping_id") or data.get("id")
+        node_id = _node_id("mapping", mapping_id)
+        if node_id:
+            graph.add_node(LineageNode(node_id, "mapping", str(mapping_id), _clean_metadata({k: data[k] for k in ("source_schema", "source_path", "target_path", "transform", "required") if k in data})))
+
+    for quality_id, (quality_node, quality_refs) in quality_nodes.items():
+        for anomaly_node, anomaly_refs in anomaly_nodes:
+            if quality_refs & anomaly_refs:
+                graph.add_edge(LineageEdge(anomaly_node, quality_node, "explains"))
+        for association_node, association_refs in association_nodes:
+            if quality_refs & association_refs:
+                graph.add_edge(LineageEdge(association_node, quality_node, "supports"))
     return graph
+def trace_from_quality(graph: LineageGraph, quality_id: str) -> list[LineageNode]:
+    return graph.reverse_trace(quality_id if str(quality_id).startswith("quality:") else f"quality:{quality_id}")
+
+
+def trace_from_anomaly(graph: LineageGraph, anomaly_id: str) -> list[LineageNode]:
+    return graph.reverse_trace(anomaly_id if str(anomaly_id).startswith("anomaly:") else f"anomaly:{anomaly_id}")
 
 
 def reverse_trace(graph: LineageGraph, node_id: str) -> list[LineageNode]:
@@ -369,4 +466,4 @@ def query_lineage(graph: LineageGraph, node_id: str, direction: str = "reverse")
     return result
 
 
-__all__ = ["LineageNode", "LineageEdge", "LineageGraph", "build_lineage_graph", "reverse_trace", "trace_from_finding", "trace_from_asset", "query_lineage"]
+__all__ = ["LineageNode", "LineageEdge", "LineageGraph", "build_lineage_graph", "reverse_trace", "trace_from_finding", "trace_from_asset", "trace_from_quality", "trace_from_anomaly", "query_lineage"]

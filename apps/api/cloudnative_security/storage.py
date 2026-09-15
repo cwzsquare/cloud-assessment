@@ -205,17 +205,25 @@ CREATE TABLE IF NOT EXISTS data_quality_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL,
   rule_id TEXT NOT NULL,
+  dimension TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
-  score REAL NOT NULL,
+  score REAL,
+  score_known INTEGER NOT NULL DEFAULT 1,
   total_count INTEGER NOT NULL,
+  passed_count INTEGER NOT NULL DEFAULT 0,
   failed_count INTEGER NOT NULL,
-  examples_json TEXT NOT NULL
+  unknown_count INTEGER NOT NULL DEFAULT 0,
+  message TEXT NOT NULL DEFAULT '',
+  evidence_present INTEGER NOT NULL DEFAULT 1,
+  examples_json TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS lineage_nodes (
   node_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
   node_type TEXT NOT NULL,
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS lineage_edges (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,6 +232,39 @@ CREATE TABLE IF NOT EXISTS lineage_edges (
   target_node TEXT NOT NULL,
   relation TEXT NOT NULL,
   UNIQUE(task_id, source_node, target_node, relation)
+);
+CREATE TABLE IF NOT EXISTS processing_configs (
+  task_id TEXT PRIMARY KEY,
+  config_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quality_metric_snapshots (
+  task_id TEXT PRIMARY KEY,
+  metrics_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quality_anomalies (
+  anomaly_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  anomaly_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  rule_id TEXT,
+  source_id TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  observed_json TEXT,
+  expected_json TEXT,
+  evidence_refs_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS association_groups (
+  association_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  record_refs_json TEXT NOT NULL,
+  matches_json TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  score REAL,
+  conditions_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS normalized_assets (
   asset_key TEXT NOT NULL,
@@ -365,6 +406,24 @@ class AssessmentStore:
         raw_snapshot_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(raw_snapshots)").fetchall()}
         if "content_hash" not in raw_snapshot_columns:
             self.conn.execute("ALTER TABLE raw_snapshots ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+        quality_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(data_quality_results)").fetchall()}
+        quality_migrations = {
+            "dimension": "ALTER TABLE data_quality_results ADD COLUMN dimension TEXT NOT NULL DEFAULT ''",
+            "score_known": "ALTER TABLE data_quality_results ADD COLUMN score_known INTEGER NOT NULL DEFAULT 1",
+            "passed_count": "ALTER TABLE data_quality_results ADD COLUMN passed_count INTEGER NOT NULL DEFAULT 0",
+            "unknown_count": "ALTER TABLE data_quality_results ADD COLUMN unknown_count INTEGER NOT NULL DEFAULT 0",
+            "message": "ALTER TABLE data_quality_results ADD COLUMN message TEXT NOT NULL DEFAULT ''",
+            "evidence_present": "ALTER TABLE data_quality_results ADD COLUMN evidence_present INTEGER NOT NULL DEFAULT 1",
+            "details_json": "ALTER TABLE data_quality_results ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column, statement in quality_migrations.items():
+            if column not in quality_columns:
+                self.conn.execute(statement)
+        lineage_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(lineage_nodes)").fetchall()}
+        if "metadata_json" not in lineage_columns:
+            self.conn.execute("ALTER TABLE lineage_nodes ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+        if "metadata_json" not in {row["name"] for row in self.conn.execute("PRAGMA table_info(lineage_edges)").fetchall()}:
+            self.conn.execute("ALTER TABLE lineage_edges ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
 
     def fill_checkpoint_metadata_defaults(self) -> None:
         for checkpoint in ASSESSMENT_CHECKPOINTS:
@@ -515,6 +574,49 @@ class AssessmentStore:
                         ),
                     )
 
+            self.conn.execute("DELETE FROM processing_configs WHERE task_id = ?", (task_id,))
+            config = self._jsonable(payload.get("processing_config"))
+            if config is not None:
+                self.conn.execute("INSERT OR REPLACE INTO processing_configs(task_id, config_json) VALUES (?, ?)", (task_id, json.dumps(config, ensure_ascii=False, default=str)))
+            self.conn.execute("DELETE FROM quality_metric_snapshots WHERE task_id = ?", (task_id,))
+            metrics = self._jsonable(payload.get("quality_metrics"))
+            if metrics is not None:
+                self.conn.execute("INSERT OR REPLACE INTO quality_metric_snapshots(task_id, metrics_json) VALUES (?, ?)", (task_id, json.dumps(metrics, ensure_ascii=False, default=str)))
+            self.conn.execute("DELETE FROM quality_anomalies WHERE task_id = ?", (task_id,))
+            for index, anomaly in enumerate(payload.get("anomalies", []) or []):
+                item = self._jsonable(anomaly)
+                if isinstance(item, dict):
+                    anomaly_id = str(item.get("anomaly_id") or f"{task_id}:anomaly:{index}")
+                    self.conn.execute(
+                        """INSERT OR REPLACE INTO quality_anomalies
+                        (anomaly_id, task_id, anomaly_type, status, rule_id, source_id, object_key, field_path, reason, observed_json, expected_json, evidence_refs_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (anomaly_id, task_id, str(item.get("anomaly_type", item.get("type", "unknown"))),
+                         str(item.get("status", "OPEN")), item.get("rule_id"), str(item.get("source_id", "")),
+                         str(item.get("object_key", "")), str(item.get("field_path", "")), str(item.get("reason", "")),
+                         json.dumps(item.get("observed_value"), ensure_ascii=False, default=str),
+                         json.dumps(item.get("expected_value"), ensure_ascii=False, default=str),
+                         json.dumps(item.get("evidence_refs", []), ensure_ascii=False, default=str)),
+                    )
+            self.conn.execute("DELETE FROM association_groups WHERE task_id = ?", (task_id,))
+            associations = self._jsonable(payload.get("associations")) or {}
+            groups = associations.get("groups", []) if isinstance(associations, dict) else []
+            for index, group in enumerate(groups):
+                item = self._jsonable(group)
+                if isinstance(item, dict):
+                    association_id = str(item.get("association_id") or item.get("group_id") or f"{task_id}:association:{index}")
+                    self.conn.execute(
+                        """INSERT OR REPLACE INTO association_groups
+                        (association_id, task_id, status, source_ids_json, record_refs_json, matches_json, reason, score, conditions_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (association_id, task_id, str(item.get("status", "UNKNOWN")),
+                         json.dumps(item.get("source_ids", []), ensure_ascii=False, default=str),
+                         json.dumps(item.get("record_refs", []), ensure_ascii=False, default=str),
+                         json.dumps(item.get("matches", []), ensure_ascii=False, default=str),
+                         str(item.get("reason", "")), item.get("score"),
+                         json.dumps(associations.get("conditions", []), ensure_ascii=False, default=str)),
+                    )
+
             self.conn.execute("DELETE FROM data_quality_results WHERE task_id = ?", (task_id,))
             for result in payload.get("data_quality_results", []) or []:
                 item = self._jsonable(result)
@@ -522,15 +624,18 @@ class AssessmentStore:
                     self.conn.execute(
                         """
                         INSERT INTO data_quality_results
-                        (task_id, rule_id, status, score, total_count, failed_count, examples_json)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (task_id, rule_id, dimension, status, score, score_known, total_count, passed_count,
+                         failed_count, unknown_count, message, evidence_present, examples_json, details_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            task_id, str(item["rule_id"]), str(item.get("status", "UNKNOWN")),
-                            float(item.get("score") if item.get("score") is not None else 0),
-                            int(item.get("total_count", 0)),
-                            int(item.get("failed_count", 0)),
+                            task_id, str(item["rule_id"]), str(item.get("dimension", "")), str(item.get("status", "UNKNOWN")),
+                            item.get("score"), int(bool(item.get("score_known", item.get("score") is not None))),
+                            int(item.get("total_count", 0)), int(item.get("passed_count", 0)),
+                            int(item.get("failed_count", 0)), int(item.get("unknown_count", 0)),
+                            str(item.get("message", "")), int(bool(item.get("evidence_present", True))),
                             json.dumps(item.get("examples", []), ensure_ascii=False, default=str),
+                            json.dumps(item.get("details", {}), ensure_ascii=False, default=str),
                         ),
                     )
 
@@ -591,8 +696,9 @@ class AssessmentStore:
                 item = self._jsonable(node)
                 if isinstance(item, dict) and item.get("node_id"):
                     self.conn.execute(
-                        "INSERT OR REPLACE INTO lineage_nodes(node_id, task_id, node_type, name) VALUES (?, ?, ?, ?)",
-                        (str(item["node_id"]), task_id, str(item.get("node_type", "unknown")), str(item.get("name", item["node_id"]))),
+                        "INSERT OR REPLACE INTO lineage_nodes(node_id, task_id, node_type, name, metadata_json) VALUES (?, ?, ?, ?, ?)",
+                        (str(item["node_id"]), task_id, str(item.get("node_type", "unknown")),
+                         str(item.get("name", item["node_id"])), json.dumps(item.get("metadata", {}), ensure_ascii=False, default=str)),
                     )
             for edge in lineage.get("edges", []) or []:
                 item = self._jsonable(edge)
@@ -600,8 +706,9 @@ class AssessmentStore:
                 target = item.get("target_node", item.get("target")) if isinstance(item, dict) else None
                 if source and target:
                     self.conn.execute(
-                        "INSERT OR IGNORE INTO lineage_edges(task_id, source_node, target_node, relation) VALUES (?, ?, ?, ?)",
-                        (task_id, str(source), str(target), str(item.get("relation", "related"))),
+                        "INSERT OR IGNORE INTO lineage_edges(task_id, source_node, target_node, relation, metadata_json) VALUES (?, ?, ?, ?, ?)",
+                        (task_id, str(source), str(target), str(item.get("relation", "related")),
+                         json.dumps(item.get("metadata", {}), ensure_ascii=False, default=str)),
                     )
 
             graph = payload.get("asset_graph") or {}
@@ -797,10 +904,14 @@ class AssessmentStore:
             processing = runs[0] if runs else None
             steps = self.list_processing_steps(processing["processing_run_id"]) if processing else []
             quality_rows = self.conn.execute("SELECT * FROM data_quality_results WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
-            nodes = self.conn.execute("SELECT node_id, node_type, name FROM lineage_nodes WHERE task_id = ?", (task_id,)).fetchall()
-            edges = self.conn.execute("SELECT source_node, target_node, relation FROM lineage_edges WHERE task_id = ?", (task_id,)).fetchall()
+            nodes = self.conn.execute("SELECT node_id, node_type, name, metadata_json FROM lineage_nodes WHERE task_id = ?", (task_id,)).fetchall()
+            edges = self.conn.execute("SELECT source_node, target_node, relation, metadata_json FROM lineage_edges WHERE task_id = ?", (task_id,)).fetchall()
             assets = self.conn.execute("SELECT asset_json FROM normalized_assets WHERE task_id = ?", (task_id,)).fetchall()
             asset_edges = self.conn.execute("SELECT source_node AS source, target_node AS target, relation FROM asset_edges WHERE task_id = ?", (task_id,)).fetchall()
+            config_row = self.conn.execute("SELECT config_json FROM processing_configs WHERE task_id = ?", (task_id,)).fetchone()
+            metrics_row = self.conn.execute("SELECT metrics_json FROM quality_metric_snapshots WHERE task_id = ?", (task_id,)).fetchone()
+            anomaly_rows = self.conn.execute("SELECT * FROM quality_anomalies WHERE task_id = ? ORDER BY anomaly_id", (task_id,)).fetchall()
+            association_rows = self.conn.execute("SELECT * FROM association_groups WHERE task_id = ? ORDER BY association_id", (task_id,)).fetchall()
             auth = self.conn.execute("SELECT profile_json FROM authentication_profiles WHERE task_id = ?", (task_id,)).fetchone()
             identities = self.conn.execute("SELECT profile_json FROM identity_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
             tokens = self.conn.execute("SELECT profile_json FROM service_account_token_profiles WHERE task_id = ? ORDER BY id", (task_id,)).fetchall()
@@ -824,8 +935,43 @@ class AssessmentStore:
                 "collection_runs": [dict(row) for row in collections],
                 "processing_run": processing,
                 "processing_steps": steps,
-                "data_quality_results": [dict(row) | {"examples": json.loads(row["examples_json"])} for row in quality_rows],
-                "lineage": {"nodes": [dict(row) for row in nodes], "edges": [dict(row) for row in edges]},
+                "data_quality_results": [
+                    dict(row)
+                    | {
+                        "examples": json.loads(row["examples_json"]),
+                        "details": json.loads(row["details_json"] or "{}"),
+                        "score_known": bool(row["score_known"]),
+                        "evidence_present": bool(row["evidence_present"]),
+                    }
+                    for row in quality_rows
+                ],
+                "processing_config": json.loads(config_row["config_json"]) if config_row else None,
+                "quality_metrics": json.loads(metrics_row["metrics_json"]) if metrics_row else None,
+                "anomalies": [
+                    dict(row)
+                    | {
+                        "observed_value": json.loads(row["observed_json"]) if row["observed_json"] else None,
+                        "expected_value": json.loads(row["expected_json"]) if row["expected_json"] else None,
+                        "evidence_refs": json.loads(row["evidence_refs_json"] or "[]"),
+                    }
+                    for row in anomaly_rows
+                ],
+                "associations": {
+                    "conditions": json.loads(association_rows[0]["conditions_json"]) if association_rows else [],
+                    "groups": [
+                        dict(row)
+                        | {
+                            "source_ids": json.loads(row["source_ids_json"]),
+                            "record_refs": json.loads(row["record_refs_json"]),
+                            "matches": json.loads(row["matches_json"]),
+                        }
+                        for row in association_rows
+                    ],
+                },
+                "lineage": {
+                    "nodes": [dict(row) | {"metadata": json.loads(row["metadata_json"] or "{}")} for row in nodes],
+                    "edges": [dict(row) | {"metadata": json.loads(row["metadata_json"] or "{}")} for row in edges],
+                },
                 "asset_graph": {"nodes": [json.loads(row["asset_json"]) for row in assets], "edges": [dict(row) for row in asset_edges]},
                 "authentication": json.loads(auth["profile_json"]) if auth else None,
                 "identities": [json.loads(row["profile_json"]) for row in identities],
@@ -839,6 +985,65 @@ class AssessmentStore:
                 "cleaning_actions": [dict(row) | {"before_value": json.loads(row["before_value"]), "after_value": json.loads(row["after_value"])} for row in cleaning],
                 "data_conflicts": [dict(row) | {"candidate_values": json.loads(row["candidate_values_json"])} for row in conflicts],
             })
+    def get_processing_config(self, task_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.conn.execute("SELECT config_json FROM processing_configs WHERE task_id = ?", (task_id,)).fetchone()
+            return json.loads(row["config_json"]) if row else None
+
+    def get_quality_metrics(self, task_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.conn.execute("SELECT metrics_json FROM quality_metric_snapshots WHERE task_id = ?", (task_id,)).fetchone()
+            return json.loads(row["metrics_json"]) if row else None
+
+    def list_quality_anomalies(self, task_id: str | None = None, status: str | None = None, anomaly_type: str | None = None,
+                               rule_id: str | None = None, keyword: str | None = None) -> list[dict[str, Any]]:
+        clauses, params = [], []
+        if task_id: clauses.append("task_id = ?"); params.append(task_id)
+        if status: clauses.append("status = ?"); params.append(status)
+        if anomaly_type: clauses.append("anomaly_type = ?"); params.append(anomaly_type)
+        if rule_id: clauses.append("rule_id = ?"); params.append(rule_id)
+        if keyword: clauses.append("(reason LIKE ? OR object_key LIKE ? OR field_path LIKE ?)"); params.extend([f"%{keyword}%"] * 3)
+        query = "SELECT * FROM quality_anomalies" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY anomaly_id"
+        with self.lock:
+            return [
+                dict(row) | {"observed_value": json.loads(row["observed_json"]) if row["observed_json"] else None,
+                             "expected_value": json.loads(row["expected_json"]) if row["expected_json"] else None,
+                             "evidence_refs": json.loads(row["evidence_refs_json"] or "[]")}
+                for row in self.conn.execute(query, tuple(params)).fetchall()
+            ]
+
+    def list_association_groups(self, task_id: str | None = None, status: str | None = None, keyword: str | None = None) -> list[dict[str, Any]]:
+        clauses, params = [], []
+        if task_id: clauses.append("task_id = ?"); params.append(task_id)
+        if status: clauses.append("status = ?"); params.append(status)
+        if keyword: clauses.append("(association_id LIKE ? OR reason LIKE ?)"); params.extend([f"%{keyword}%"] * 2)
+        query = "SELECT * FROM association_groups" + ((" WHERE " + " AND ".join(clauses)) if clauses else "") + " ORDER BY association_id"
+        with self.lock:
+            return [
+                dict(row) | {"source_ids": json.loads(row["source_ids_json"]), "record_refs": json.loads(row["record_refs_json"]),
+                             "matches": json.loads(row["matches_json"]), "conditions": json.loads(row["conditions_json"])}
+                for row in self.conn.execute(query, tuple(params)).fetchall()
+            ]
+
+    def get_quality_lineage(self, task_id: str, rule_id: str | None = None) -> dict[str, Any]:
+        payload = self.get_structured_payload(task_id)
+        nodes = payload.get("lineage", {}).get("nodes", [])
+        edges = payload.get("lineage", {}).get("edges", [])
+        if rule_id:
+            prefix = f"quality:{rule_id}"
+            keep = {node["node_id"] for node in nodes if node["node_id"] == prefix}
+            changed = True
+            while changed:
+                changed = False
+                for edge in edges:
+                    if edge["source_node"] in keep and edge["target_node"] not in keep:
+                        keep.add(edge["target_node"]); changed = True
+                    if edge["target_node"] in keep and edge["source_node"] not in keep:
+                        keep.add(edge["source_node"]); changed = True
+            nodes = [node for node in nodes if node["node_id"] in keep]
+            edges = [edge for edge in edges if edge["source_node"] in keep and edge["target_node"] in keep]
+        return {"nodes": nodes, "edges": edges}
+
     def list_field_mappings(self, **_: Any) -> list[dict[str, Any]]:
         with self.lock:
             rows = self.conn.execute(

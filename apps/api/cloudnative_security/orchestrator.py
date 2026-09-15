@@ -14,7 +14,7 @@ from .integration import build_integration_pipeline
 from .models import AssetRef, AssessmentReport, Evidence, Finding
 from .rules import _finding
 from .scoring import build_report
-from .structured_analysis import build_structured_payload
+from .structured_analysis import StructuredProcessingConfig, build_structured_payload
 
 
 @dataclass(frozen=True)
@@ -246,6 +246,7 @@ class AssessmentOrchestrator:
         self.registry = registry or default_registry()
 
     def run(self, request: AssessmentRequest) -> OrchestratorResult:
+        processing_config = StructuredProcessingConfig.from_mapping(request.options.get("processing"))
         adapter_results: list[AdapterResult] = []
         findings: list[Finding] = []
         for adapter in self.registry.for_profile(request.profile):
@@ -288,7 +289,7 @@ class AssessmentOrchestrator:
         report.summary["integration_pipeline"] = build_integration_pipeline(
             request, adapter_results, normalized, quality, adapter_health
         )
-        structured = build_structured_payload(request.task_id, adapter_results, normalized, report, quality)
+        structured = build_structured_payload(request.task_id, adapter_results, normalized, report, quality, processing_config)
         sources_by_id = {str(item.get("source_id")): item for item in structured.get("sources", []) if isinstance(item, dict)}
         collection_runs = structured.get("collection_runs", []) or []
         for adapter_result in adapter_results:
@@ -346,6 +347,18 @@ class AssessmentOrchestrator:
                 "step_count": len(structured.get("processing_steps") or []),
             },
             "quality_summary": structured.get("quality_summary") or {},
+            "quality_metrics": {
+                "count": len(structured.get("quality_metrics", {}).get("metrics", [])) if isinstance(structured.get("quality_metrics"), dict) else 0,
+                "status_count": statuses((structured.get("quality_metrics") or {}).get("metrics", [])) if isinstance(structured.get("quality_metrics"), dict) else {},
+            },
+            "anomalies": {
+                "count": len(structured.get("anomalies") or []),
+                "status_count": statuses(structured.get("anomalies")),
+            },
+            "associations": {
+                "count": len((structured.get("associations") or {}).get("groups", [])) if isinstance(structured.get("associations"), dict) else 0,
+                "status_count": statuses((structured.get("associations") or {}).get("groups", [])) if isinstance(structured.get("associations"), dict) else {},
+            },
             "authentication": {
                 "status": authentication.get("status", "UNKNOWN") if isinstance(authentication, dict) else "UNKNOWN",
                 "anonymous_auth": authentication.get("anonymous_auth") if isinstance(authentication, dict) else None,

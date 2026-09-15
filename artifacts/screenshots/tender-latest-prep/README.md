@@ -1,29 +1,38 @@
 # 最新版投标截图准备包
 
-本目录提供最新版 DOCX「软件功能（提供截图）」对应的干净截图，以及每张图的说明文字和红框描述清单。当前包共 12 张截图，其中 9 张属于非异构章节、3 张属于异构算力智能调度章节。截图均未绘制红框；红框由接替模型按各图片的描述列表执行。
+本目录提供 `/tmp/图-待调整.docx` 的新版截图包及通过 `officecli` 回写的文档副本。新版共 13 张结构化数据功能截图，逐一对应文档中的 13 个图片位置；截图来自真实仪表盘页面或已验证的 SmartCloud 资源链路场景，均以 2000×1775 PNG 输出。
 
-## 严格覆盖口径
+## 截图口径
 
-当前包定位为页面功能概览，不宣称已完整证明最新版表格的每个细项。非异构章节的 9 张图覆盖已有前端可见的来源、运行、流水线、映射、清洗、质量规则、冲突、血缘、资产关系、结果下钻和智算云基础设施链路；清洗配置与异常统计、跨源关联条件与匹配方式、质量指标明细与根因节点下钻仍需单独补图。
-
-本仓库当前前端没有上述三类独立配置 / 下钻面板。为保持“其余截图来自正常前端”的口径，本次不使用临时拼接页面冒充正式功能；具体缺口和后续截图验收项见 `coverage-gaps.md`。
+- 每张图只对应一个功能主题，画面顶部给出功能标题和数据口径。
+- 红框已绘制在对应功能区域；红框只标记功能点，不作为数据内容。
+- 浏览器截图使用独立真实页面会话，聚焦保留目标面板，避免超长页面整页捕获导致失败；页面内容仍来自真实 API / 持久化任务结果。
+- `structured-gap-multisource` 用于清洗、去重、映射、质量、关联、血缘和冲突截图，包含 kubernetes 与 observability 两个来源。
+- `pve-live-20260910b` 用于真实来源采集和问题详情交互截图。
+- 智算云第 3 项使用已验证的资源链路场景图，展示对象存储、分布式文件系统、计算节点、GPU、调度平台和结果回传。
 
 ## 文件清单
 
-| 截图 | 主要对应条款 |
-| --- | --- |
-| `latest-heterogeneous-scheduling-template.png` | 异构算力智能调度系统第 1 项 |
-| `latest-tenant-quota-and-validation.png` | 异构算力智能调度系统第 2 项 |
-| `latest-ai-workloads-and-services.png` | 异构算力智能调度系统第 3 项 |
-| `latest-real-30.3-sources-and-runs.png` | 可观测性数据采集工具第 1 项 |
-| `latest-real-30.3-processing-pipeline.png` | 可观测性数据采集工具第 1、2 项 |
-| `latest-real-30.3-field-mapping.png` | 可观测性数据采集工具第 2 项 |
-| `latest-real-30.3-cleaning-actions.png` | 可观测性数据采集工具第 1、2 项 |
-| `latest-smartcloud-infrastructure-flow.png` | 可观测性数据采集工具第 3 项 |
-| `latest-real-30.3-quality-rules.png` | 多源数据质量管理与验证工具第 1 项 |
-| `latest-real-30.3-quality-and-conflicts.png` | 多源数据质量管理与验证工具第 2、3 项 |
-| `latest-real-30.3-lineage-and-asset-graph.png` | 多源数据质量管理与验证工具第 2、3 项 |
-| `latest-real-30.4-finding-detail.png` | 多源数据质量管理与验证工具第 3 项的结果下钻展示 |
-| 每张图片同名 `.md` | 图片说明、数据口径、红框目标 |
+| 文档图片位置 | 截图文件 | 功能对应 |
+| --- | --- | --- |
+| image1 | `28.1.1-01-multisource-collection.png` | 多源采集与运行记录 |
+| image2 | `28.1.1-02-cleaning-anomalies.png` | 清洗动作与异常记录 |
+| image3 | `28.1.1-03-deduplication.png` | 去重与处理步骤 |
+| image4 | `28.1.2-01-field-mapping.png` | 字段映射 |
+| image5 | `28.1.2-02-format-standardization.png` | 格式标准化与质量配置 |
+| image6 | `28.1.2-03-processing-pipeline.png` | 数据处理流水线 |
+| image7 | `28.1.3-01-smartcloud-infrastructure.png` | 智算云基础设施资源链路 |
+| image8 | `28.2.1-01-quality-rules-custom.png` | 质量规则与自定义校验 |
+| image9 | `28.2.2-01-cross-source-association.png` | 跨源关联条件与匹配图谱 |
+| image10 | `28.2.2-02-lineage-dag.png` | 质量血缘与根因下钻 |
+| image11 | `28.2.3-01-quality-metrics-root-causes.png` | 质量指标与根因统计 |
+| image12 | `28.2.3-02-quality-conflicts.png` | 数据冲突与候选值 |
+| image13 | `28.2.3-03-finding-detail.png` | 问题详情与处理建议 |
 
-3 张异构章节截图（`latest-heterogeneous-scheduling-template.png`、`latest-tenant-quota-and-validation.png`、`latest-ai-workloads-and-services.png`）采用场景化输入以展示最新版条款要求；另外 9 张非异构截图来自实际云原生清单适配器运行后的前端展示，其中 `latest-smartcloud-infrastructure-flow.png` 明确属于可观测性数据采集工具第 3 项，不属于异构章节。该口径只写在本目录说明中，不写入对应截图画面。
+每张图均配有同名 `.md`，记录条款映射、红框目标、数据来源和可见边界。
+
+## 文档输出
+
+- 新版文档：`图-待调整-新版.docx`
+- 新版文档已通过 `officecli batch` 更新 13 个图片节点，并用 `officecli query` 核对 13 个图片引用和替换后的 alt 文本。
+- `officecli validate` 报告的 8 项 numbering/styles schema warning 来自原文档既有 OOXML 结构；图片批处理 13/13 成功，未出现图片节点写入失败。

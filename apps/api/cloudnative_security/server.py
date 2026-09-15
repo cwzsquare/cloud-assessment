@@ -13,6 +13,7 @@ from .orchestrator import AssessmentOrchestrator
 from .report_renderer import render_html_report, render_markdown_report
 from .schemas import schema_bundle
 from .storage import AssessmentStore
+from .structured_analysis import StructuredProcessingConfig
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -97,6 +98,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             items = self._structured_records(("list_data_conflicts",), "data_conflicts", query, task_id=task_id)
             self._json(self._structured_response(items, query))
             return
+        if parsed.path == "/api/quality-anomalies":
+            items = self._structured_records(("list_quality_anomalies",), "anomalies", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
+        if parsed.path == "/api/source-associations":
+            items = self._structured_records(("list_association_groups",), "groups", query, task_id=task_id)
+            self._json(self._structured_response(items, query))
+            return
         if parsed.path == "/api/collection-runs":
             items = self._structured_records(("list_collection_runs",), "collection_runs", query, task_id=task_id)
             self._json(self._structured_response(items, query))
@@ -140,11 +149,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in {"/api/data-quality", "/api/data-quality/results"}:
             payload = self.store.get_structured_payload(task_id) if task_id else {}
-            self._json({"task_id": task_id, "results": payload.get("data_quality_results", [])})
+            self._json({"task_id": task_id, "results": payload.get("data_quality_results", []), "metrics": payload.get("quality_metrics"), "processing_config": payload.get("processing_config")})
+            return
+        if parsed.path == "/api/data-quality/metrics":
+            metrics = self.store.get_quality_metrics(task_id) if task_id else None
+            self._json({"task_id": task_id, "metrics": metrics} if metrics is not None else {"error": "not found"}, 200 if metrics is not None else 404)
             return
         if parsed.path == "/api/lineage":
             payload = self.store.get_structured_payload(task_id) if task_id else {}
             self._json(payload.get("lineage", {"nodes": [], "edges": []}))
+            return
+        if parsed.path.startswith("/api/lineage/quality/"):
+            rule_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            graph = self.store.get_quality_lineage(task_id, rule_id) if task_id else {"nodes": [], "edges": []}
+            self._json(graph)
             return
         if parsed.path.startswith("/api/lineage/finding/"):
             finding_id = unquote(parsed.path.rsplit("/", 1)[-1])
@@ -485,6 +503,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._json({"error": "target not found"}, 404)
             return
         merged = (target or {}) | payload
+        options = merged.get("options", {})
+        if not isinstance(options, dict):
+            self._json({"error": "options must be an object"}, 400)
+            return
+        try:
+            processing_config = StructuredProcessingConfig.from_mapping(options.get("processing"))
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+            return
+        options = dict(options)
+        options["processing"] = processing_config.to_dict()
+        merged["options"] = options
         request = AssessmentRequest(
             task_id=merged.get("task_id", "api-task"),
             profile=merged.get("profile", "all_tools_demo"),

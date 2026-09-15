@@ -4,8 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from .adapters import AssessmentRequest
 from .orchestrator import AssessmentOrchestrator
+from .adapters import AssessmentRequest
+from .structured_analysis import StructuredProcessingConfig
 from .report_renderer import write_html_report
 from .server import run_server
 from .storage import AssessmentStore, export_markdown_report
@@ -30,6 +31,7 @@ def main() -> int:
     parser.add_argument("--markdown-output", help="Write Markdown report to this path.")
     parser.add_argument("--html-output", help="Write HTML report to this path.")
     parser.add_argument("--sqlite", help="Persist assessment results to SQLite.")
+    parser.add_argument("--processing-config", help="JSON structured processing configuration path.")
     args = parser.parse_args()
 
     if args.serve:
@@ -37,6 +39,18 @@ def main() -> int:
         return 0
     if not (args.manifest or args.kubeconfig or args.pve_ssh):
         parser.error("one of --manifest, --kubeconfig, or --pve-ssh is required unless --serve is used")
+    processing: dict[str, object] | None = None
+    if args.processing_config:
+        config_path = Path(args.processing_config)
+        try:
+            loaded = json.loads(config_path.read_text())
+            if not isinstance(loaded, dict):
+                raise ValueError("processing configuration must be a JSON object")
+            StructuredProcessingConfig.from_mapping(loaded)
+            processing = loaded
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            parser.error(f"invalid --processing-config: {exc}")
+
 
     request = AssessmentRequest(
         task_id=args.task_id,
@@ -48,6 +62,7 @@ def main() -> int:
         ssh_key=args.ssh_key,
         ssh_user=args.ssh_user,
         extra_manifests=args.extra_manifest,
+        options={"processing": processing} if processing is not None else {},
     )
     result = AssessmentOrchestrator().run(request)
     report_for_export = result.report

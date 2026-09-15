@@ -9,9 +9,9 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div>
-          <h1>云安全评估仪表盘</h1>
-          <p id="taskMeta">等待加载评估任务</p>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.4 3.1 7.8 7.5 9.5 4.4-1.7 7.5-5.1 7.5-9.5V6L12 3Z"/><path d="m8.5 12 2.3 2.3 4.7-4.8"/></svg></span>
+          <div><h1>云安全评估工作台</h1><p id="taskMeta">等待加载评估任务</p></div>
         </div>
         <div class="task-picker">
           <label for="taskSelect">当前评估</label>
@@ -21,6 +21,7 @@
       </header>
 
       <nav class="tabs" aria-label="工作台页面">
+        <span class="nav-caption">安全工作空间</span>
         <button class="tab active" data-route="overview" type="button">安全总览</button>
         <button class="tab tab-outcome" data-route="findings" type="button">风险问题</button>
         <button class="tab tab-outcome" data-route="observability" type="button">服务与资源</button>
@@ -42,6 +43,7 @@
 
       <main>
         <section id="overview" class="view active">
+          <div class="page-heading"><h2>安全总览</h2><p>掌握当前安全态势，优先处理关键风险。</p></div>
           <div class="summary-grid">
             <article class="metric-card score-card">
               <span>总分</span>
@@ -143,6 +145,13 @@
                   <option value="all_tools_demo">全工具演示</option>
                   <option value="cloud_native_full">云原生全量检查</option>
                 </select>
+                <label class="field-label" for="processingDataType">数据类型<select id="processingDataType"><option value="structured">结构化资源</option><option value="events">事件流</option></select></label>
+                <label class="field-label" for="processingFormat">目标格式<select id="processingFormat"><option value="structured/v1">structured/v1</option><option value="structured/v2">structured/v2</option></select></label>
+                <label class="field-label" for="processingMissingPolicy">缺失字段策略<select id="processingMissingPolicy"><option value="record">记录</option><option value="null">置空</option><option value="default">默认值</option><option value="drop">丢弃</option></select></label>
+                <label class="field-label" for="processingAssociationMode">关联方式<select id="processingAssociationMode"><option value="hybrid">混合匹配</option><option value="exact">精确匹配</option><option value="fuzzy">模糊匹配</option><option value="semantic">语义匹配</option></select></label>
+                <label class="field-label field-span-2" for="processingQualityRules">质量规则 JSON<textarea id="processingQualityRules" rows="3" placeholder='[{"rule_id":"quality-custom","dimension":"custom","custom_type":"regex"}]'></textarea></label>
+                <label class="field-label field-span-2" for="processingAnomalyRules">异常规则 JSON<textarea id="processingAnomalyRules" rows="3" placeholder='[{"rule_id":"port-range","field_path":"port","detector":"range","minimum":1,"maximum":65535}]'></textarea></label>
+                <label class="field-label field-span-2" for="processingAssociationConditions">关联条件 JSON<textarea id="processingAssociationConditions" rows="3" placeholder='[{"field_path":"entity_id","condition_type":"entity_id","mode":"exact"}]'></textarea></label>
                 <button id="createAssessmentBtn" type="button">创建并运行</button>
               </div>
             </section>
@@ -241,14 +250,28 @@
             <section class="panel"><h2>数据来源</h2><div class="table-wrap"><table><thead><tr><th>来源</th><th>类型</th><th>模式</th><th>版本</th></tr></thead><tbody id="structuredSources"></tbody></table></div></section>
             <section class="panel"><h2>采集运行</h2><div class="table-wrap"><table><thead><tr><th>运行</th><th>来源</th><th>状态</th><th>对象</th><th>警告</th><th>错误</th></tr></thead><tbody id="structuredCollections"></tbody></table></div></section>
           </div>
-          <section class="panel"><h2>处理流水线步骤详情</h2><div class="table-wrap"><table><thead><tr><th>步骤</th><th>状态</th><th>输入</th><th>输出</th><th>丢弃</th><th>警告</th><th>错误</th><th>耗时</th><th>摘要</th></tr></thead><tbody id="structuredSteps"></tbody></table></div></section>
           <div class="dashboard-grid two">
-            <section class="panel"><h2>字段映射</h2><div class="table-wrap"><table><thead><tr><th>来源模式</th><th>来源字段</th><th>目标字段</th><th>转换</th><th>必填</th></tr></thead><tbody id="structuredMappings"></tbody></table></div></section>
-            <section class="panel"><h2>清洗动作</h2><div class="table-wrap"><table><thead><tr><th>对象</th><th>字段</th><th>动作</th><th>前值</th><th>后值</th><th>原因</th></tr></thead><tbody id="structuredCleaning"></tbody></table></div></section>
+            <section class="panel"><h2>处理步骤</h2><div class="table-wrap"><table><thead><tr><th>步骤</th><th>状态</th><th>输入</th><th>输出</th><th>丢弃</th><th>警告</th><th>错误</th><th>耗时</th><th>摘要</th></tr></thead><tbody id="structuredSteps"></tbody></table></div></section>
+            <section class="panel"><h2>字段映射</h2><div class="table-wrap"><table><thead><tr><th>来源 schema</th><th>来源路径</th><th>目标路径</th><th>转换</th><th>必填</th></tr></thead><tbody id="structuredMappings"></tbody></table></div></section>
+          </div>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>清洗动作</h2><div class="table-wrap"><table><thead><tr><th>对象</th><th>字段</th><th>动作</th><th>清洗前</th><th>清洗后</th><th>原因</th></tr></thead><tbody id="structuredCleaning"></tbody></table></div></section>
+          </div>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>处理配置</h2><div id="structuredProcessingConfig" class="quality-grid"></div><div id="structuredProcessingDetails" class="processing-detail"></div></section>
+            <section class="panel"><h2>质量指标</h2><div id="structuredQualityMetrics" class="quality-grid"></div><div id="structuredQualityMetricDetails" class="metric-detail-list"></div></section>
+          </div>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>质量异常</h2><div class="filters"><select id="qualityAnomalyStatus"><option value="">全部状态</option><option value="OPEN">待处理</option><option value="REVIEW">复核</option></select><input id="qualityAnomalyKeyword" type="search" placeholder="搜索异常" /></div><div class="table-wrap"><table><thead><tr><th>类型</th><th>状态</th><th>字段</th><th>对象</th><th>原因</th></tr></thead><tbody id="structuredAnomalies"></tbody></table></div></section>
+            <section class="panel"><h2>来源关联</h2><div class="filters"><select id="associationStatus"><option value="">全部状态</option><option value="MATCHED">已匹配</option><option value="CONFLICT">冲突</option><option value="AMBIGUOUS">歧义</option><option value="UNMATCHED">未匹配</option></select><input id="associationKeyword" type="search" placeholder="搜索关联" /></div><div class="table-wrap"><table><thead><tr><th>关联</th><th>状态</th><th>来源</th><th>得分</th><th>原因</th></tr></thead><tbody id="structuredAssociations"></tbody></table></div><div id="structuredAssociationConditions" class="condition-list"></div><div id="associationGraphSvg" class="graph-svg"></div></section>
+          </div>
+          <div class="dashboard-grid two">
+            <section class="panel"><h2>质量血缘</h2><div id="qualityLineageGraph" class="graph-svg"></div></section>
+            <section class="panel"><h2>异常追踪与根因</h2><div id="anomalyTrace" class="quality-grid"></div><div id="structuredQualityRootCause" class="root-cause-list"></div></section>
           </div>
           <div class="dashboard-grid two">
             <section class="panel"><h2>数据冲突</h2><div class="table-wrap"><table><thead><tr><th>对象</th><th>字段</th><th>候选值</th><th>选中来源</th><th>处理原因</th></tr></thead><tbody id="structuredConflicts"></tbody></table></div></section>
-            <section class="panel"><h2>数据质量规则</h2><div class="table-wrap"><table><thead><tr><th>规则</th><th>维度</th><th>状态</th><th>得分</th><th>异常</th></tr></thead><tbody id="structuredQuality"></tbody></table></div></section>
+            <section class="panel"><h2>数据质量规则</h2><div class="table-wrap"><table><thead><tr><th>规则</th><th>维度</th><th>类型</th><th>状态</th><th>得分</th><th>比较</th><th>异常</th></tr></thead><tbody id="structuredQuality"></tbody></table></div></section>
           </div>
           <div class="dashboard-grid two">
             <section class="panel"><h2>数据血缘</h2><div id="structuredLineage" class="quality-grid"></div><div id="lineageSvg" class="graph-svg"></div></section>

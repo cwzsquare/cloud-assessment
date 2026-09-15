@@ -9,6 +9,31 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from .asset_graph import build_asset_graph
+from .authn_analyzers import (
+    analyze_authentication_profile,
+    analyze_identity_profiles,
+    analyze_service_account_tokens,
+)
+from .authn_profile import AuthenticationProfile
+from .data_cleaning import CleaningConfig, clean_records
+from .data_contracts import CollectionRun, SourceDescriptor
+from .data_observability import (
+    AssociationConfig,
+    QualityMetrics,
+    associate_records,
+    build_quality_metrics,
+)
+from .data_pipeline import DataPipeline
+from .data_quality import DataQualityRule, evaluate_data_quality
+from .data_lineage import build_lineage_graph
+from .dedup import deduplicate_evidence, deduplicate_resources
+from .encryption_config import parse_encryption_config
+from .etcd_profile import assess_cluster_consistency, parse_apiserver_etcd_client, parse_etcd_flags
+from .field_mapping import FieldMappingRule, apply_field_mappings
+from .mtls_coverage import analyze_mtls_coverage
+from .certificate_inspector import inspect_certificate
+
 @dataclass
 class PipelineContext:
     """Mutable artifacts shared by the real 14-step processing pipeline.
@@ -26,40 +51,27 @@ class PipelineContext:
     rbac_rows: list[dict[str, Any]] = field(default_factory=list)
     snapshots: list[dict[str, Any]] = field(default_factory=list)
     sources: list[Any] = field(default_factory=list)
+    processing_config: StructuredProcessingConfig | None = None
     parsed_records: list[dict[str, Any]] | None = None
     mapped_records: list[dict[str, Any]] | None = None
     mapping_result: Any = None
     cleaned_records: list[dict[str, Any]] | None = None
     cleaning_result: Any = None
+    anomaly_records: list[Any] = field(default_factory=list)
     normalized_assets: list[dict[str, Any]] | None = None
     resource_dedup: Any = None
     evidence_rows: list[dict[str, Any]] | None = None
     evidence_dedup: Any = None
     asset_graph: Any = None
+    association_result: Any = None
     quality_results: list[Any] | None = None
+    quality_metrics: QualityMetrics | None = None
     aggregated_findings: list[Any] | None = None
     checkpoint_scores: list[Any] | None = None
     lineage: Any = None
     persistence_outputs: list[str] | None = None
 
-from .asset_graph import build_asset_graph
-from .authn_analyzers import (
-    analyze_authentication_profile,
-    analyze_identity_profiles,
-    analyze_service_account_tokens,
-)
-from .authn_profile import AuthenticationProfile
-from .data_cleaning import CleaningConfig, clean_records
-from .data_contracts import CollectionRun, SourceDescriptor
-from .data_pipeline import DataPipeline
-from .data_quality import DataQualityRule, evaluate_data_quality
-from .data_lineage import build_lineage_graph
-from .dedup import deduplicate_evidence, deduplicate_resources
-from .encryption_config import parse_encryption_config
-from .etcd_profile import assess_cluster_consistency, parse_apiserver_etcd_client, parse_etcd_flags
-from .field_mapping import FieldMappingRule, apply_field_mappings
-from .mtls_coverage import analyze_mtls_coverage
-from .certificate_inspector import inspect_certificate
+
 
 CURRENT_STRUCTURED_SCHEMA_VERSION = "structured-assessment/v1"
 
@@ -92,6 +104,10 @@ def normalize_structured_payload(payload: Mapping[str, Any] | None) -> dict[str,
         "field_mapping_rules": [],
         "cleaning_actions": [],
         "data_conflicts": [],
+        "anomalies": [],
+        "associations": {"groups": [], "matches": [], "counts": {}, "conditions": [], "graph": {"nodes": [], "edges": []}},
+        "quality_metrics": {"record_count": 0, "rule_pass_rate": None, "rule_fail_rate": None, "rule_unknown_rate": None, "metrics": [], "root_causes": []},
+        "processing_config": StructuredProcessingConfig.from_mapping({}).to_dict(),
         "lineage": {"nodes": [], "edges": []},
         "asset_graph": {"nodes": [], "edges": []},
         "service_account_tokens": [],
@@ -162,6 +178,78 @@ def _mapping_rules() -> list[FieldMappingRule]:
         FieldMappingRule("MAP-NAMESPACE", "kubernetes", "normalized", "metadata.namespace", "normalized.namespace"),
     ]
 
+@dataclass(frozen=True)
+class StructuredProcessingConfig:
+    data_type: str = "kubernetes"
+    target_format: str = CURRENT_STRUCTURED_SCHEMA_VERSION
+    mapping_rules: tuple[FieldMappingRule, ...] = field(default_factory=lambda: tuple(_mapping_rules()))
+    cleaning: CleaningConfig = field(default_factory=lambda: CleaningConfig(name_fields=("name",), list_fields=("finalizers",), label_fields=("labels",)))
+    quality_rules: tuple[DataQualityRule, ...] = field(default_factory=tuple)
+    association: AssociationConfig = field(default_factory=AssociationConfig)
+    label_field: str | None = None
+
+    def __post_init__(self) -> None:
+        if not str(self.data_type).strip() or not str(self.target_format).strip():
+            raise ValueError("processing data_type and target_format are required")
+        mapping = tuple(item if isinstance(item, FieldMappingRule) else FieldMappingRule(**dict(item)) for item in (self.mapping_rules or ()))
+        quality = tuple(item if isinstance(item, DataQualityRule) else DataQualityRule(**dict(item)) for item in (self.quality_rules or ()))
+        association = self.association if isinstance(self.association, AssociationConfig) else AssociationConfig(**dict(self.association))
+        object.__setattr__(self, "mapping_rules", mapping)
+        object.__setattr__(self, "quality_rules", quality)
+        object.__setattr__(self, "association", association)
+        object.__setattr__(self, "label_field", str(self.label_field) if self.label_field else None)
+
+    @staticmethod
+    def _default_quality_rules() -> tuple[DataQualityRule, ...]:
+        return (
+            DataQualityRule("DQ-COMPLETE", "completeness", required_fields=("kind", "metadata.name"), threshold=100),
+            DataQualityRule("DQ-UNIQUE", "uniqueness", key_fields=("kind", "metadata.namespace", "metadata.name"), threshold=100),
+            DataQualityRule("DQ-NAME", "field_validity", fields=("kind", "metadata.name"), patterns={"metadata.name": r"[A-Za-z0-9][A-Za-z0-9._-]*"}, threshold=100),
+            DataQualityRule("DQ-TYPES", "type_consistency", expected_types={"kind": "str", "metadata": "dict"}, threshold=100),
+            DataQualityRule("DQ-REFERENCE", "reference_integrity", reference_fields={"metadata.ownerReferences[].name": "metadata.name"}, threshold=100),
+            DataQualityRule("DQ-TIME", "temporal_continuity", time_field="metadata.creationTimestamp", threshold=100),
+            DataQualityRule("DQ-LINEAGE", "lineage_integrity", lineage_fields=("kind", "metadata.name"), threshold=100),
+        )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any] | None) -> "StructuredProcessingConfig":
+        if value is None:
+            value = {}
+        if not isinstance(value, Mapping):
+            raise ValueError("processing configuration must be a JSON object")
+        try:
+            mapping_rules = value.get("mapping_rules")
+            if mapping_rules is None:
+                mapping_rules = _mapping_rules()
+            cleaning_value = value.get("cleaning")
+            cleaning = cleaning_value if isinstance(cleaning_value, CleaningConfig) else CleaningConfig(**dict(cleaning_value or {"name_fields": ("name",), "list_fields": ("finalizers",), "label_fields": ("labels",)}))
+            quality_rules = value.get("quality_rules")
+            quality = tuple(DataQualityRule(**dict(item)) if not isinstance(item, DataQualityRule) else item for item in (quality_rules if quality_rules is not None else cls._default_quality_rules()))
+            association_value = value.get("association")
+            association = association_value if isinstance(association_value, AssociationConfig) else AssociationConfig(**dict(association_value or {}))
+            return cls(
+                data_type=str(value.get("data_type") or "kubernetes"),
+                target_format=str(value.get("target_format") or CURRENT_STRUCTURED_SCHEMA_VERSION),
+                mapping_rules=tuple(item if isinstance(item, FieldMappingRule) else FieldMappingRule(**dict(item)) for item in mapping_rules),
+                cleaning=cleaning,
+                quality_rules=quality,
+                association=association,
+                label_field=value.get("label_field"),
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError(f"invalid processing configuration: {exc}") from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "data_type": self.data_type,
+            "target_format": self.target_format,
+            "mapping_rules": [item.to_dict() for item in self.mapping_rules],
+            "cleaning": asdict(self.cleaning) | {"anomaly_rules": [item.to_dict() for item in self.cleaning.anomaly_rules]},
+            "quality_rules": [item.to_dict() for item in self.quality_rules],
+            "association": self.association.to_dict(),
+            "label_field": self.label_field,
+        }
+
 
 def _objects_from(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, dict):
@@ -219,15 +307,23 @@ def _normalization_from_context(context: PipelineContext, processing_run: Any) -
         conflicts.extend(item.to_dict() for item in resource_dedup.conflicts)
     if evidence_dedup is not None:
         conflicts.extend(item.to_dict() for item in evidence_dedup.conflicts)
-    rules = _mapping_rules()
+    rules = context.processing_config.mapping_rules if context.processing_config else tuple(_mapping_rules())
+    anomalies = [item.to_dict() if hasattr(item, "to_dict") else item for item in context.anomaly_records]
+    associations = context.association_result.to_dict() if hasattr(context.association_result, "to_dict") else (context.association_result or {})
+    quality_metrics = context.quality_metrics.to_dict() if hasattr(context.quality_metrics, "to_dict") else (context.quality_metrics or {})
     return {
+        "processing_config": context.processing_config.to_dict() if context.processing_config else StructuredProcessingConfig.from_mapping({}).to_dict(),
         "field_mapping_rules": [rule.to_dict() for rule in rules],
         "mapped_records": mapped_records,
         "mapping_summary": mapping_summary,
         "cleaning_actions": cleaning_actions,
         "cleaning_summary": cleaning_summary,
+        "anomalies": anomalies,
+        "anomaly_summary": (context.cleaning_result.summary if context.cleaning_result is not None else {}),
         "normalized_assets": normalized_assets,
         "data_conflicts": conflicts,
+        "associations": associations,
+        "quality_metrics": quality_metrics,
         "deduplication": {
             "resource_duplicate_count": resource_duplicates,
             "evidence_duplicate_count": evidence_duplicates,
@@ -235,17 +331,15 @@ def _normalization_from_context(context: PipelineContext, processing_run: Any) -
         },
     }
 
-def _quality(objects: list[dict[str, Any]], graph: Any) -> list[Any]:
-    rules = [
-        DataQualityRule("DQ-COMPLETE", "completeness", required_fields=("kind", "metadata.name"), threshold=100),
-        DataQualityRule("DQ-UNIQUE", "uniqueness", key_fields=("kind", "metadata.namespace", "metadata.name"), threshold=100),
-        DataQualityRule("DQ-NAME", "field_validity", fields=("kind", "metadata.name"), patterns={"metadata.name": r"[A-Za-z0-9][A-Za-z0-9._-]*"}, threshold=100),
-        DataQualityRule("DQ-TYPES", "type_consistency", expected_types={"kind": "str", "metadata": "dict"}, threshold=100),
-        DataQualityRule("DQ-REFERENCE", "reference_integrity", reference_fields={"metadata.ownerReferences[].name": "metadata.name"}, threshold=100),
-        DataQualityRule("DQ-TIME", "temporal_continuity", time_field="metadata.creationTimestamp", threshold=100),
-        DataQualityRule("DQ-LINEAGE", "lineage_integrity", lineage_fields=("kind", "metadata.name"), threshold=100),
-    ]
-    return evaluate_data_quality(objects, rules, references={"lineage": graph.to_dict() if hasattr(graph, "to_dict") else graph})
+
+def _quality(objects: list[dict[str, Any]], graph: Any, rules: tuple[DataQualityRule, ...] | None = None, association_result: Any = None) -> list[Any]:
+    selected = rules or StructuredProcessingConfig._default_quality_rules()
+    return evaluate_data_quality(
+        objects,
+        selected,
+        references={"lineage": graph.to_dict() if hasattr(graph, "to_dict") else graph},
+        association_result=association_result,
+    )
 
 
 def _pipeline(context: PipelineContext) -> Any:
@@ -279,13 +373,14 @@ def _pipeline(context: PipelineContext) -> Any:
         }
 
     def field_mapping(data: Any, ctx: PipelineContext) -> dict[str, Any]:
-        result = apply_field_mappings(_objects_from(data), _mapping_rules())
+        rules = ctx.processing_config.mapping_rules if ctx.processing_config else tuple(_mapping_rules())
+        result = apply_field_mappings(_objects_from(data), rules)
         ctx.mapping_result = result
         ctx.mapped_records = result.records
         return {
             "output": result.records,
             "summary": {
-                "mapped_fields": [rule.mapping_id for rule in _mapping_rules()],
+                "mapped_fields": [rule.mapping_id for rule in rules],
                 "required_failures": result.required_failures,
                 "mapping_errors": len(result.errors),
             },
@@ -293,20 +388,20 @@ def _pipeline(context: PipelineContext) -> Any:
         }
 
     def data_cleaning(data: Any, ctx: PipelineContext) -> dict[str, Any]:
-        result = clean_records(
-            _objects_from(data),
-            CleaningConfig(name_fields=("name",), list_fields=("finalizers",), label_fields=("labels",)),
-        )
+        config = ctx.processing_config.cleaning if ctx.processing_config else CleaningConfig(name_fields=("name",), list_fields=("finalizers",), label_fields=("labels",))
+        result = clean_records(_objects_from(data), config)
         ctx.cleaning_result = result
         ctx.cleaned_records = result.records
+        ctx.anomaly_records = list(result.anomalies)
         return {
             "output": result.records,
             "summary": {
+                **result.summary,
                 "cleaning_actions": len(result.actions),
                 "invalid_count": result.invalid_count,
                 "sensitive_skipped": result.sensitive_skipped,
             },
-            "status": "PARTIAL" if result.invalid_count else "SUCCESS",
+            "status": "PARTIAL" if result.invalid_count or result.dropped_count or result.anomalies else "SUCCESS",
         }
 
     def fingerprint(data: Any, ctx: PipelineContext) -> list[dict[str, Any]]:
@@ -338,17 +433,23 @@ def _pipeline(context: PipelineContext) -> Any:
                 "deduplicated_findings": len(evidence_result.records),
             },
         }
-
     def relationship_building(data: Any, ctx: PipelineContext) -> list[Any]:
         source_records = (
             ctx.resource_dedup.records
             if ctx.resource_dedup is not None
             else (ctx.cleaned_records if ctx.cleaned_records is not None else ctx.objects)
         )
+        association_records = ctx.cleaned_records if ctx.cleaned_records is not None else source_records
         ctx.asset_graph = build_asset_graph(source_records, ctx.rbac_rows)
+        config = ctx.processing_config.association if ctx.processing_config else AssociationConfig()
+        ctx.association_result = associate_records(association_records, config)
         return {
             "output": ctx.asset_graph.nodes,
-            "summary": {"nodes": len(ctx.asset_graph.nodes), "edges": len(ctx.asset_graph.edges)},
+            "summary": {
+                "nodes": len(ctx.asset_graph.nodes),
+                "edges": len(ctx.asset_graph.edges),
+                "association_counts": dict(ctx.association_result.counts),
+            },
         }
 
     def data_quality(data: Any, ctx: PipelineContext) -> list[Any]:
@@ -357,10 +458,26 @@ def _pipeline(context: PipelineContext) -> Any:
             if ctx.resource_dedup is not None
             else (ctx.cleaned_records if ctx.cleaned_records is not None else ctx.objects)
         )
-        ctx.quality_results = _quality(source_records, ctx.asset_graph)
+        rules = ctx.processing_config.quality_rules if ctx.processing_config else StructuredProcessingConfig._default_quality_rules()
+        ctx.quality_results = _quality(source_records, ctx.asset_graph, rules, ctx.association_result)
+        ctx.quality_metrics = build_quality_metrics(
+            source_records,
+            ctx.quality_results,
+            cleaning_result=ctx.cleaning_result,
+            mapping_result=ctx.mapping_result,
+            dedup_result=ctx.resource_dedup,
+            associations=ctx.association_result,
+            label_field=ctx.processing_config.label_field if ctx.processing_config else None,
+        )
         return {
             "output": ctx.quality_results,
-            "summary": {"rule_count": len(ctx.quality_results), "unknown_count": sum(item.status == "UNKNOWN" for item in ctx.quality_results)},
+            "summary": {
+                "rule_count": len(ctx.quality_results),
+                "unknown_count": sum(item.status == "UNKNOWN" for item in ctx.quality_results),
+                "fail_count": sum(item.status == "FAIL" for item in ctx.quality_results),
+                "metric_count": len(ctx.quality_metrics.metrics),
+                "root_cause_count": len(ctx.quality_metrics.root_causes),
+            },
         }
 
     def security_rules(data: Any, ctx: PipelineContext) -> list[Any]:
@@ -416,8 +533,16 @@ def _pipeline(context: PipelineContext) -> Any:
     return pipeline.run(context.objects, context=context)
 
 
-def build_structured_payload(task_id: str, adapter_results: list[Any], findings: list[Any], report: Any, quality_summary: Any) -> dict[str, Any]:
+def build_structured_payload(
+    task_id: str,
+    adapter_results: list[Any],
+    findings: list[Any],
+    report: Any,
+    quality_summary: Any,
+    processing_config: StructuredProcessingConfig | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return all structured products generated from real adapter evidence."""
+    config = processing_config if isinstance(processing_config, StructuredProcessingConfig) else StructuredProcessingConfig.from_mapping(processing_config)
     objects = _objects(adapter_results)
     rbac_rows = _rbac_rows(adapter_results)
     sources: list[SourceDescriptor] = []
@@ -440,6 +565,7 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
         rbac_rows=rbac_rows,
         snapshots=snapshots,
         sources=sources,
+        processing_config=config,
     )
     processing_run = _pipeline(context)
     normalization = _normalization_from_context(context, processing_run)
@@ -447,7 +573,19 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
     asset_graph = context.asset_graph
     quality_results = context.quality_results if context.quality_results is not None else []
     final_findings = context.aggregated_findings if context.aggregated_findings is not None else list(findings)
-    lineage = build_lineage_graph(snapshots, assets, final_findings, getattr(report, "checkpoint_scores", []), [report], sources)
+    lineage = build_lineage_graph(
+        snapshots,
+        assets,
+        final_findings,
+        getattr(report, "checkpoint_scores", []),
+        [report],
+        sources,
+        quality_results=quality_results,
+        anomalies=context.anomaly_records,
+        associations=context.association_result,
+        cleaning_actions=normalization["cleaning_actions"],
+        mapping_rules=normalization["field_mapping_rules"],
+    )
     context.lineage = lineage
 
     apiserver = _commands(objects, "kube-apiserver")
@@ -473,8 +611,9 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
     token_profiles = analyze_service_account_tokens(workloads, service_accounts, rbac_rows, None)
     identities = analyze_identity_profiles(rbac_rows)
     return normalize_structured_payload({
-        "schema_version": "structured-assessment/v1",
+        "schema_version": config.target_format,
         "task_id": task_id,
+        "processing_config": config.to_dict(),
         "sources": [_jsonable(x) for x in sources],
         "collection_runs": [_jsonable(x) for x in collections],
         "snapshots": snapshots,
@@ -482,6 +621,9 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
         "processing_steps": [_jsonable(x) for x in processing_run.steps],
         "data_quality_results": [_jsonable(x) for x in quality_results],
         "quality_summary": _jsonable(quality_summary),
+        "quality_metrics": _jsonable(context.quality_metrics),
+        "associations": _jsonable(context.association_result),
+        "anomalies": [item.to_dict() if hasattr(item, "to_dict") else _jsonable(item) for item in context.anomaly_records],
         "field_mapping_rules": normalization["field_mapping_rules"],
         "cleaning_actions": normalization["cleaning_actions"],
         "data_conflicts": normalization["data_conflicts"],
@@ -504,6 +646,8 @@ def build_structured_payload(task_id: str, adapter_results: list[Any], findings:
             "lineage_nodes": len(lineage.nodes),
             "asset_nodes": len(getattr(asset_graph, "nodes", []) or []),
             "quality_results": len(quality_results),
+            "anomalies": len(context.anomaly_records),
+            "association_groups": len(getattr(context.association_result, "groups", []) or []),
             "etcd_nodes": len(etcd_profiles),
             "certificates": len(certificate_profiles),
         },

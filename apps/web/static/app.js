@@ -11,6 +11,11 @@
     fieldMappings: [],
     cleaningActions: [],
     dataConflicts: [],
+    qualityAnomalies: [],
+    associationGroups: [],
+    qualityMetrics: null,
+    qualityAnomaliesError: "",
+    associationGroupsError: "",
     collectionRuns: [],
     history: [],
     comparison: null,
@@ -20,6 +25,13 @@
     selectedAsset: "",
     filters: { tool_id: "", domain: "", severity: "", status: "", namespace: "", kind: "", name: "", keyword: "" },
     rbacFilters: { subject: "", resource: "", verb: "", scope: "", dangerous_only: true },
+  };
+  var apiListStrict = function (path) { return api(path).then(listItems); };
+  var structuredList = function (path, errorKey) {
+    return apiListStrict(path).catch(function (error) {
+      state[errorKey] = error.message || String(error);
+      return [];
+    });
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -178,13 +190,19 @@
         apiList("/api/cleaning-actions" + query),
         apiList("/api/data-conflicts" + query),
         apiList("/api/collection-runs" + query),
+        structuredList("/api/quality-anomalies" + query, "qualityAnomaliesError"),
+        structuredList("/api/source-associations" + query, "associationGroupsError"),
+        api("/api/data-quality/metrics" + query).catch(function (error) { state.qualityMetrics = null; return { error: error.message || String(error) }; }),
         apiList("/api/history"),
       ]).then(function (lists) {
         state.fieldMappings = lists[0];
         state.cleaningActions = lists[1];
         state.dataConflicts = lists[2];
         state.collectionRuns = lists[3];
-        state.history = lists[4];
+        state.qualityAnomalies = lists[4];
+        state.associationGroups = lists[5];
+        state.qualityMetrics = lists[6] && lists[6].metrics || (state.structured && state.structured.quality_metrics) || null;
+        state.history = lists[7];
         renderAll();
       });
     });
@@ -578,11 +596,28 @@
   }
 
   function createAssessment() {
+    var processing = {
+      data_type: $("processingDataType").value,
+      target_format: $("processingFormat").value,
+      cleaning: { missing_policy: $("processingMissingPolicy").value },
+      association: { source_field: "source", conditions: [] },
+      quality_rules: [],
+    };
+    ["processingQualityRules", "processingAnomalyRules", "processingAssociationConditions"].forEach(function (id) {
+      var value = ($(id).value || "").trim();
+      if (!value) return;
+      try {
+        var parsed = JSON.parse(value);
+        if (id === "processingQualityRules") processing.quality_rules = parsed;
+        else if (id === "processingAnomalyRules") processing.anomaly_rules = parsed;
+        else processing.association.conditions = parsed;
+      } catch (err) { alert("处理配置 JSON 无效: " + id); }
+    });
     var payload = {
       task_id: $("newTaskId").value || ("dashboard-task-" + Date.now()),
       target_id: $("targetSelect").value,
       profile: $("newTaskProfile").value,
-      options: { destructive_tests: false },
+      options: { destructive_tests: false, processing: processing },
     };
     if (!payload.target_id) { alert("请先保存或选择目标"); return; }
     fetch("/api/assessments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then(function (res) {
@@ -920,9 +955,39 @@
     }).join("");
     return '<svg class="stable-graph" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="结构化关系图"><g>' + lines + circles + '</g></svg>';
   }
+  function qualityLineageSubset(lineage, rootCauses) {
+    var nodes = lineage.nodes || [];
+    var edges = lineage.edges || [];
+    var wanted = {};
+    (rootCauses || []).forEach(function (cause) {
+      (cause.lineage_node_ids || []).forEach(function (nodeId) { wanted[String(nodeId)] = true; });
+    });
+    var focused = nodes.filter(function (node) { return wanted[String(node.id || node.node_id || node.key || "")]; });
+    if (!focused.length) focused = nodes.slice(0, 24);
+    var keys = {};
+    focused.forEach(function (node) { keys[String(node.id || node.node_id || node.key || "")] = true; });
+    edges.forEach(function (edge) {
+      var source = String(edge.source || edge.source_node || "");
+      var target = String(edge.target || edge.target_node || "");
+      if (keys[source] || keys[target]) {
+        wanted[source] = true;
+        wanted[target] = true;
+      }
+    });
+    focused = nodes.filter(function (node) { return wanted[String(node.id || node.node_id || node.key || "")]; }).slice(0, 24);
+    var finalKeys = {};
+    focused.forEach(function (node) { finalKeys[String(node.id || node.node_id || node.key || "")] = true; });
+    return {
+      nodes: focused,
+      edges: edges.filter(function (edge) { return finalKeys[String(edge.source || edge.source_node || "")] && finalKeys[String(edge.target || edge.target_node || "")]; }),
+    };
+  }
 
   function renderStructured() {
     var structured = state.structured || {};
+    var processingConfig = structured.processing_config || {};
+    var metrics = state.qualityMetrics || structured.quality_metrics || {};
+    var associationData = structured.associations || {};
     var run = structured.processing_run || {};
     var steps = structured.processing_steps || [];
     var quality = structured.data_quality_results || [];
@@ -957,9 +1022,15 @@
     $("structuredConflicts").innerHTML = conflicts.map(function (item) {
       return "<tr><td>" + cell(item.object_key) + "</td><td>" + cell(item.field_path) + "</td><td>" + cell(JSON.stringify(item.candidate_values || item.candidates || [])) + "</td><td>" + cell(item.selected_source) + "</td><td>" + cell(item.resolution_reason) + "</td></tr>";
     }).join("") || '<tr><td colspan="5" class="empty">暂无数据冲突记录</td></tr>';
+    var configuredRules = {};
+    (processingConfig.quality_rules || []).forEach(function (rule) { configuredRules[rule.rule_id] = rule; });
     $("structuredQuality").innerHTML = quality.map(function (item) {
-      return "<tr><td>" + cell(item.rule_id) + "</td><td>" + cell(item.dimension) + "</td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell(item.score) + "</td><td>" + cell(item.failed_count) + "</td></tr>";
-    }).join("") || '<tr><td colspan="5" class="empty">暂无数据质量规则结果</td></tr>';
+      var details = item.details || {};
+      var configured = configuredRules[item.rule_id] || {};
+      var ruleType = details.rule_type || configured.custom_type || item.dimension;
+      var comparison = [item.passed_count, item.failed_count, item.unknown_count].some(function (value) { return value !== undefined && value !== null; }) ? [item.passed_count || 0, item.failed_count || 0, item.unknown_count || 0].join(" / ") : "--";
+      return "<tr><td>" + cell(item.rule_id) + "</td><td>" + cell(item.dimension) + "</td><td><code>" + cell(ruleType) + "</code></td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell(item.score) + "</td><td>" + cell(comparison) + "</td><td>" + cell(item.failed_count || 0) + "</td></tr>";
+    }).join("") || '<tr><td colspan="7" class="empty">暂无数据质量规则结果</td></tr>';
     $("structuredLineage").innerHTML = [["节点", (lineage.nodes || []).length], ["关系", (lineage.edges || []).length], ["可追溯对象", (assets.nodes || []).length]].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
     $("lineageSvg").innerHTML = graphSvg("lineageSvg", lineage.nodes || [], lineage.edges || [], "");
     var assetKinds = Array.from(new Set((assets.nodes || []).map(function (node) { return node.kind || node.node_type; }).filter(Boolean))).sort();
@@ -972,6 +1043,86 @@
     $("assetGraphKeyword").oninput = renderStructured;
     $("assetGraphReset").onclick = function () { $("assetGraphKind").value = ""; $("assetGraphKeyword").value = ""; renderStructured(); };
     document.querySelectorAll("#assetGraphSvg .graph-node").forEach(function (node) { node.onclick = function () { state.selectedAsset = node.dataset.assetKey || ""; renderStructured(); }; });
+    var cleaningConfig = processingConfig.cleaning || {};
+    var configuredConditions = (processingConfig.association && processingConfig.association.conditions) || [];
+    var displayConditions = associationData.conditions || configuredConditions;
+    var metricItems = metrics.metrics || [];
+    $("structuredProcessingConfig").innerHTML = [
+      ["数据类型", processingConfig.data_type],
+      ["目标格式", processingConfig.target_format],
+      ["映射规则", (processingConfig.mapping_rules || []).length],
+      ["缺失策略", processingConfig.cleaning && processingConfig.cleaning.missing_policy],
+      ["质量规则", (processingConfig.quality_rules || []).length],
+      ["关联条件", processingConfig.association && (processingConfig.association.conditions || []).length],
+    ].map(function (item) { return "<div><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    var enabledSteps = steps.filter(function (step) { return step.status === "SUCCESS" || step.status === "PARTIAL"; }).length;
+    var customRuleTypes = Array.from(new Set((processingConfig.quality_rules || []).map(function (rule) { return rule.custom_type || "builtin"; })));
+    $("structuredProcessingDetails").innerHTML = [
+      ["流水线步骤", enabledSteps + " / " + steps.length + " 已运行"],
+      ["清洗字段", (cleaningConfig.field_paths || []).join("、") || "按默认字段集"],
+      ["质量规则类型", customRuleTypes.join("、") || "builtin"],
+      ["关联条件", displayConditions.map(function (condition) { return condition.field_path + " · " + condition.mode; }).join("、") || "未配置"],
+    ].map(function (item) { return "<div class=\"processing-detail-row\"><span>" + cell(item[0]) + "</span><strong>" + cell(item[1]) + "</strong></div>"; }).join("");
+    $("structuredQualityMetrics").innerHTML = metricItems.map(function (item) {
+      return "<div class=\"quality-metric-card\"><span>" + cell(item.label || item.metric_id) + "</span><strong>" + cell(item.status) + "</strong><small>" + cell(item.pass_rate == null ? item.unknown_reason : item.pass_rate + "%") + "</small></div>";
+    }).join("") || '<div class="empty">没有可比较的质量指标</div>';
+    $("structuredQualityMetricDetails").innerHTML = metricItems.map(function (item) {
+      var causes = (item.root_cause_codes || []).join("、") || "无直接根因";
+      return "<div class=\"metric-detail-row\"><strong>" + cell(item.label || item.metric_id) + "</strong><span>值 " + cell(item.value) + " · 影响 " + cell(item.affected_count) + " / " + cell(item.total_count) + "</span><small>根因：" + cell(causes) + "</small></div>";
+    }).join("") || '<div class="empty">没有可比较的质量指标</div>';
+    var anomalyStatus = $("qualityAnomalyStatus").value;
+    var anomalyKeyword = ($("qualityAnomalyKeyword").value || "").toLowerCase();
+    var anomalies = (state.qualityAnomalies.length ? state.qualityAnomalies : (structured.anomalies || [])).filter(function (item) {
+      return (!anomalyStatus || item.status === anomalyStatus) && (!anomalyKeyword || JSON.stringify(item).toLowerCase().indexOf(anomalyKeyword) >= 0);
+    });
+    $("structuredAnomalies").innerHTML = anomalies.map(function (item) {
+      return "<tr><td>" + cell(item.anomaly_type || item.type) + "</td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell(item.field_path) + "</td><td>" + cell(item.object_key) + "</td><td>" + cell(item.reason) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">' + cell(state.qualityAnomaliesError || "暂无质量异常") + "</td></tr>";
+    var associationStatus = $("associationStatus").value;
+    var associationKeyword = ($("associationKeyword").value || "").toLowerCase();
+    var groups = (state.associationGroups.length ? state.associationGroups : ((structured.associations || {}).groups || [])).filter(function (item) {
+      return (!associationStatus || item.status === associationStatus) && (!associationKeyword || JSON.stringify(item).toLowerCase().indexOf(associationKeyword) >= 0);
+    });
+    $("structuredAssociations").innerHTML = groups.map(function (item) {
+      return "<tr><td><code>" + cell(item.association_id || item.group_id) + "</code></td><td><span class=\"pill " + cell(String(item.status || "").toLowerCase()) + "\">" + cell(item.status) + "</span></td><td>" + cell((item.source_ids || []).join(", ")) + "</td><td>" + cell(item.score) + "</td><td>" + cell(item.reason) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">' + cell(state.associationGroupsError || "暂无来源关联") + "</td></tr>";
+    $("structuredAssociationConditions").innerHTML = displayConditions.length ? '<div class="condition-title">关联条件与匹配方式</div>' + displayConditions.map(function (condition) {
+      var threshold = condition.tolerance_seconds ? "容差 " + condition.tolerance_seconds + "s" : "阈值 " + text(condition.threshold, "1");
+      return "<span class=\"condition-chip\"><strong>" + cell(condition.field_path) + "</strong><small>" + cell(condition.condition_type + " · " + condition.mode + " · " + threshold) + "</small></span>";
+    }).join("") : '<div class="empty">未配置跨源关联条件</div>';
+    var associationNodes = [];
+    var associationEdges = [];
+    var associationNodeKeys = {};
+    groups.slice(0, 8).forEach(function (group, index) {
+      var groupId = String(group.association_id || group.group_id || "group-" + index);
+      var groupKey = "association:" + groupId;
+      associationNodes.push({ id: groupKey, kind: "关联组 · " + (group.status || "UNKNOWN"), label: "组 " + (index + 1) + " · " + (group.status || "UNKNOWN") });
+      associationNodeKeys[groupKey] = true;
+      var sources = Array.isArray(group.source_ids) ? group.source_ids : safeJson(group.source_ids_json, []);
+      sources.forEach(function (source) {
+        var sourceKey = "source:" + source;
+        if (!associationNodeKeys[sourceKey]) {
+          associationNodes.push({ id: sourceKey, kind: "数据来源", label: source });
+          associationNodeKeys[sourceKey] = true;
+        }
+        associationEdges.push({ source: sourceKey, target: groupKey });
+      });
+    });
+    $("associationGraphSvg").innerHTML = associationNodes.length ? graphSvg("associationGraphSvg", associationNodes, associationEdges, "") : '<div class="empty">没有可绘制的关联图谱</div>';
+    var qualityLineage = $("qualityLineageGraph");
+    var qualityRoots = metrics.root_causes || [];
+    var qualityLineageData = qualityLineageSubset(lineage, qualityRoots);
+    qualityLineage.innerHTML = graphSvg("qualityLineageGraph", qualityLineageData.nodes, qualityLineageData.edges, "");
+    $("anomalyTrace").innerHTML = anomalies.slice(0, 8).map(function (item) {
+      return "<div><span>" + cell(item.anomaly_type || item.type) + "</span><strong>" + cell(item.evidence_refs && item.evidence_refs.length ? item.evidence_refs.join(", ") : item.reason) + "</strong></div>";
+    }).join("") || '<div class="empty">暂无可追踪异常证据</div>';
+    $("structuredQualityRootCause").innerHTML = qualityRoots.slice(0, 8).map(function (cause) {
+      return "<div class=\"root-cause-row\"><strong>" + cell(cause.code) + "</strong><span>" + cell(cause.message) + "</span><small>影响 " + cell(cause.count) + " 条 · 节点 " + cell((cause.lineage_node_ids || []).join(", ")) + "</small></div>";
+    }).join("") || '<div class="empty">没有可追踪的质量根因</div>';
+    $("qualityAnomalyStatus").onchange = renderStructured;
+    $("qualityAnomalyKeyword").oninput = renderStructured;
+    $("associationStatus").onchange = renderStructured;
+    $("associationKeyword").oninput = renderStructured;
   }
 
   function renderAuthn() {
