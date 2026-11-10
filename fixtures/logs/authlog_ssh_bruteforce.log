@@ -1,3 +1,0 @@
-2026-06-22T02:41:01Z k8s-worker-1 sshd[2101]: Failed password for invalid user admin from 10.20.0.99 port 49152 ssh2
-2026-06-22T02:41:03Z k8s-worker-1 sshd[2102]: Failed password for invalid user root from 10.20.0.99 port 49153 ssh2
-2026-06-22T02:41:06Z k8s-worker-1 sshd[2103]: Failed password for invalid user ubuntu from 10.20.0.99 port 49154 ssh2
